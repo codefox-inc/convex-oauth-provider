@@ -8,7 +8,12 @@
  * @module
  */
 
-import type * as lib from "../lib.js";
+import type * as clientManagement from "../clientManagement.js";
+import type * as constants from "../constants.js";
+import type * as handlers from "../handlers.js";
+import type * as mutations from "../mutations.js";
+import type * as queries from "../queries.js";
+import type * as token_security from "../token_security.js";
 
 import type {
   ApiFromModules,
@@ -18,7 +23,12 @@ import type {
 import { anyApi, componentsGeneric } from "convex/server";
 
 const fullApi: ApiFromModules<{
-  lib: typeof lib;
+  clientManagement: typeof clientManagement;
+  constants: typeof constants;
+  handlers: typeof handlers;
+  mutations: typeof mutations;
+  queries: typeof queries;
+  token_security: typeof token_security;
 }> = anyApi as any;
 
 /**

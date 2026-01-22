@@ -11,7 +11,12 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@codefox-inc/oauth-provider": ["../src/client"],
+      "@codefox-inc/oauth-provider/*": ["../src/*"]
+    }
   },
   "include": ["./src", "vite.config.ts"]
 }

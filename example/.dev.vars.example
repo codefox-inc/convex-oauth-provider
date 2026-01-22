@@ -1,0 +1,5 @@
+# Cloudflare Workers local development environment variables
+# Copy this file to .dev.vars and fill in your values
+CONVEX_URL=https://your-deployment.convex.cloud
+CONVEX_SITE_URL=https://your-deployment.convex.site
+SITE_URL=http://localhost:8787

@@ -1,84 +1,63 @@
 # Publishing
 
-In order for other people to install and use this component, you can publish the
-package to npm.
+This package uses [Changesets](https://github.com/changesets/changesets) for version management and publishing.
 
-You will first need to have an npmjs account with permissions to push to your
-package name.
+## Automated Release (Recommended)
 
-If this is your first time, here are the recommended steps:
+Releases are automated via GitHub Actions. When changes are pushed to `main`:
 
-1. Ensure the package.json "name" matches what you want it to be called. It
-   should either be like `my-package` or `@my-org/my-package`. If it's the
-   latter, ensure you have an npmjs account with permissions to push to
-   `my-org`.
-2. `npm login` to login to npmjs.
-3. `npm run clean` to clean your `/dist` directory.
-4. `npm ci` to install the dependencies with the versions specified in
-   `package-lock.json`.
-5. `npm run build` to build the package fresh.
-6. (Optional) `npm run typecheck` to typecheck the package.
-7. (Optional) `npm run lint` to lint the package.
-8. (Optional) `npm run test` to test the package.
-9. (Optional) `npm pack` will create a .tgz file of the package. You can then
-   try installing it in another project with
-   `npm install ./path/to/your-package.tgz` to sanity check that it works as
-   expected. You can remove the .tgz file after.
-10. `npm publish --access public` to publish the package to npm.
-11. `git tag v0.1.0` to tag the new version.
-12. `git push --follow-tags` to push the tags to the repository. This way, other
-    contributors can always see what code was published with each version.
-    Running `npm version ...` will create these tags and commits automatically.
+1. If there are changesets, a "Version Packages" PR is created
+2. When merged, the package is automatically published to npmjs.com
 
-After the initial publish, you can use the release scripts documented below,
-which will do steps 3-12 automatically (except the sanity check in step 9).
+### Setup (Repository Admin)
 
-## Package scripts for releasing
+Add `NPM_TOKEN` to GitHub repository secrets:
+1. Create an access token on npmjs.com (Account Settings → Access Tokens → Automation)
+2. Add it to GitHub: Settings → Secrets → Actions → New repository secret → `NPM_TOKEN`
 
-In package.json, there are some scripts that are useful for doing releases.
+## Creating a Changeset
 
-- `preversion` will run the tests and typecheck the code before marking a new
-  version.
-- `version` will open the changelog in vim and then save it before committing
-  the new version.
-- `prepublishOnly` will make a clean build of the package before publishing.
-
-These are not required and can be modified or removed if desired. They will all
-be run automatically when using one of the deployment commands.
-
-## Deploying a new alpha version
+When you make changes that should be released:
 
 ```sh
-npm run alpha
+npm run changeset
 ```
 
-This will create a prerelease version with an `@alpha` tag. It will then publish
-the package to npm and push the code and new tag. Users can install the package
-with `npm install @your-package@alpha`.
+This will prompt you to:
+1. Select the type of change (patch, minor, major)
+2. Write a summary of the changes
 
-## Deploying a new release version
+Commit the generated changeset file with your changes.
+
+## Manual Release (Local)
+
+If you need to release manually:
 
 ```sh
+# 1. Login to npm (or configure .npmrc for GitHub Packages)
+npm login
+
+# 2. Version the package (applies changesets)
+npm run version
+
+# 3. Build and publish
 npm run release
 ```
 
-This will create a patch version and publish as `latest`. It will then publish
-the package to npm and push the code and new tag. To publish a new minor or
-major version, you can run the commands manually:
+## Package Scripts
+
+- `npm run changeset` - Create a new changeset
+- `npm run version` - Apply changesets and update package version
+- `npm run release` - Build and publish to registry
+
+## Building a Test Package
 
 ```sh
-npm version minor # or major
-npm publish
-git push --follow-tags
-```
-
-## Building a one-off package
-
-```sh
-npm run clean
-npm run build
+npm run build:clean
 npm pack
 ```
 
-You can then provide the .tgz file to others to install via
-`npm install ./path/to/your-package.tgz`.
+You can then install the .tgz file in another project:
+```sh
+npm install ./path/to/codefox-inc-oauth-provider-0.1.0.tgz
+```

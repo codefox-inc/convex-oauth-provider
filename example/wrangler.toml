@@ -1,0 +1,22 @@
+# Cloudflare Workers 設定 (OAuth Provider Example)
+name = "oauth-provider-example"
+main = "worker/index.ts"
+compatibility_date = "2025-12-20"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
+
+# 静的アセット設定 (Vite output)
+[assets]
+directory = "dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[observability]
+enabled = true
+
+# Local development: Environment variables are loaded from .dev.vars
+# Create example/.dev.vars with:
+#   CONVEX_URL=your-convex-url
+#   CONVEX_SITE_URL=your-convex-site-url
+#   SITE_URL=http://localhost:8787

@@ -23,32 +23,178 @@ import type { FunctionReference } from "convex/server";
  */
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
-    lib: {
-      add: FunctionReference<
+    clientManagement: {
+      deleteClient: FunctionReference<
         "mutation",
         "internal",
-        { targetId: string; text: string; userId: string },
-        string,
+        { clientId: string },
+        any,
         Name
       >;
-      list: FunctionReference<
+      registerClient: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          description?: string;
+          isInternal?: boolean;
+          logoUrl?: string;
+          name: string;
+          policyUrl?: string;
+          redirectUris: Array<string>;
+          scopes: Array<string>;
+          tosUrl?: string;
+          type: "confidential" | "public";
+          website?: string;
+        },
+        any,
+        Name
+      >;
+      verifyClientSecret: FunctionReference<
+        "mutation",
+        "internal",
+        { clientId: string; clientSecret: string },
+        any,
+        Name
+      >;
+    };
+    mutations: {
+      consumeAuthCode: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          clientId: string;
+          code: string;
+          codeVerifier: string;
+          redirectUri?: string;
+        },
+        any,
+        Name
+      >;
+      deleteClient: FunctionReference<
+        "mutation",
+        "internal",
+        { clientId: string },
+        any,
+        Name
+      >;
+      issueAuthorizationCode: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          clientId: string;
+          codeChallenge: string;
+          codeChallengeMethod: string;
+          nonce?: string;
+          redirectUri: string;
+          scopes: Array<string>;
+          userId: string;
+        },
+        any,
+        Name
+      >;
+      revokeAuthorization: FunctionReference<
+        "mutation",
+        "internal",
+        { clientId: string; userId: string },
+        any,
+        Name
+      >;
+      rotateRefreshToken: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          accessToken: string;
+          clientId: string;
+          expiresAt: number;
+          oldRefreshToken: string;
+          refreshToken?: string;
+          refreshTokenExpiresAt?: number;
+          scopes: Array<string>;
+          userId: string;
+        },
+        any,
+        Name
+      >;
+      saveTokens: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          accessToken: string;
+          authorizationCode?: string;
+          clientId: string;
+          expiresAt: number;
+          refreshToken?: string;
+          refreshTokenExpiresAt?: number;
+          scopes: Array<string>;
+          userId: string;
+        },
+        any,
+        Name
+      >;
+      updateAuthorizationLastUsed: FunctionReference<
+        "mutation",
+        "internal",
+        { clientId: string; userId: string },
+        any,
+        Name
+      >;
+      upsertAuthorization: FunctionReference<
+        "mutation",
+        "internal",
+        { clientId: string; scopes: Array<string>; userId: string },
+        any,
+        Name
+      >;
+    };
+    queries: {
+      getAuthorization: FunctionReference<
         "query",
         "internal",
-        { limit?: number; targetId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          targetId: string;
-          text: string;
-          userId: string;
-        }>,
+        { clientId: string; userId: string },
+        any,
         Name
       >;
-      translate: FunctionReference<
-        "action",
+      getClient: FunctionReference<
+        "query",
         "internal",
-        { baseUrl: string; commentId: string },
-        string,
+        { clientId: string },
+        any,
+        Name
+      >;
+      getRefreshToken: FunctionReference<
+        "query",
+        "internal",
+        { refreshToken: string },
+        any,
+        Name
+      >;
+      getTokensByUser: FunctionReference<
+        "query",
+        "internal",
+        { userId: string },
+        any,
+        Name
+      >;
+      hasAnyAuthorization: FunctionReference<
+        "query",
+        "internal",
+        { userId: string },
+        any,
+        Name
+      >;
+      hasAuthorization: FunctionReference<
+        "query",
+        "internal",
+        { clientId: string; userId: string },
+        any,
+        Name
+      >;
+      listClients: FunctionReference<"query", "internal", {}, any, Name>;
+      listUserAuthorizations: FunctionReference<
+        "query",
+        "internal",
+        { userId: string },
+        any,
         Name
       >;
     };

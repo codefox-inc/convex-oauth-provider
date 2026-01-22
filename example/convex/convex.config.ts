@@ -1,5 +1,5 @@
 import { defineApp } from "convex/server";
-import oauthProvider from "@codefox-inc/oauth-provider/convex.config.js";
+import oauthProvider from "@codefox-inc/oauth-provider/convex.config";
 
 const app = defineApp();
 app.use(oauthProvider);

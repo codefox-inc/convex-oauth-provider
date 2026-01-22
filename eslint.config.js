@@ -9,6 +9,8 @@ export default [
     ignores: [
       "dist/**",
       "example/dist/**",
+      "example/worker/**",
+      "example/.wrangler/**",
       "*.config.{js,mjs,cjs,ts,tsx}",
       "example/**/*.config.{js,mjs,cjs,ts,tsx}",
       "**/_generated/",

@@ -1,146 +1,571 @@
-# Convex Component Template
+# @codefox-inc/oauth-provider
 
-This is a Convex component, ready to be published on npm.
+OAuth 2.1 / OpenID Connect Provider implemented as a Convex component.
 
-To create your own component:
-
-1. Write code in src/component for your component. Component-specific tables,
-   queries, mutations, and actions go here.
-1. Write code in src/client for the Class that interfaces with the component.
-   This is the bridge your users will access to get information into and out of
-   your component
-1. Write example usage in example/convex/example.ts.
-1. Delete the text in this readme until `---` and flesh out the README.
-1. Publish to npm with `npm run alpha` or `npm run release`.
-
-To develop your component run a dev process in the example project:
-
-```sh
-npm i
-npm run dev
-```
-
-`npm i` will do the install and an initial build. `npm run dev` will start a
-file watcher to re-build the component, as well as the example project frontend
-and backend, which does codegen and installs the component.
-
-Modify the schema and index files in src/component/ to define your component.
-
-Write a client for using this component in src/client/index.ts.
-
-If you won't be adding frontend code (e.g. React components) to this component
-you can delete "./react" references in package.json and "src/react/" directory.
-If you will be adding frontend code, add a peer dependency on React in
-package.json.
-
-### Component Directory structure
-
-```
-.
-├── README.md           documentation of your component
-├── package.json        component name, version number, other metadata
-├── package-lock.json   Components are like libraries, package-lock.json
-│                       is .gitignored and ignored by consumers.
-├── src
-│   ├── component/
-│   │   ├── _generated/ Files here are generated for the component.
-│   │   ├── convex.config.ts  Name your component here and use other components
-│   │   ├── lib.ts    Define functions here and in new files in this directory
-│   │   └── schema.ts   schema specific to this component
-│   ├── client/
-│   │   └── index.ts    Code that needs to run in the app that uses the
-│   │                   component. Generally the app interacts directly with
-│   │                   the component's exposed API (src/component/*).
-│   └── react/          Code intended to be used on the frontend goes here.
-│       │               Your are free to delete this if this component
-│       │               does not provide code.
-│       └── index.ts
-├── example/            example Convex app that uses this component
-│   └── convex/
-│       ├── _generated/       Files here are generated for the example app.
-│       ├── convex.config.ts  Imports and uses this component
-│       ├── myFunctions.ts    Functions that use the component
-│       └── schema.ts         Example app schema
-└── dist/               Publishing artifacts will be created here.
-```
-
----
-
-# Convex Oauth Provider
-
-[![npm version](https://badge.fury.io/js/@example%2Foauth-provider.svg)](https://badge.fury.io/js/@example%2Foauth-provider)
-
-<!-- START: Include on https://convex.dev/components -->
-
-- [ ] What is some compelling syntax as a hook?
-- [ ] Why should you use this component?
-- [ ] Links to docs / other resources?
-
-Found a bug? Feature request?
-[File it here](https://github.com/codefox-inc/convex-oauth-provider/issues).
+> **⚠️ Beta Software**
+> Built for [Convex Auth](https://labs.convex.dev/auth) which is currently in **Beta**.
+> Expect breaking changes. Production use at your own risk.
 
 ## Installation
 
-Create a `convex.config.ts` file in your app's `convex/` folder and install the
-component by calling `use`:
+```bash
+npm add @codefox-inc/oauth-provider
+```
 
-```ts
+## Features
+
+- **OAuth 2.1 compliant** authorization and token endpoints
+- **OpenID Connect Discovery** for automatic client configuration
+- **PKCE required** for all authorization code flows (S256 only)
+- **Secure token storage** using SHA-256 hashing for tokens and authorization codes
+- **JWT access tokens** with RS256 signing
+- **Refresh token rotation** for enhanced security
+- **Dynamic client registration** (opt-in)
+- **Authorization management** for user consent tracking
+- **JWKS endpoint** for token verification
+
+## OAuth 2.1 Compliance
+
+This implementation follows [OAuth 2.1 (draft-ietf-oauth-v2-1-14)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-14) specification:
+
+### Supported Grant Types
+- ✅ **Authorization Code with PKCE** (public and confidential clients)
+- ✅ **Refresh Token** (with token rotation)
+
+### Unsupported Features (OAuth 2.0 Legacy)
+- ❌ **Implicit Grant** (removed in OAuth 2.1 for security reasons)
+- ❌ **Resource Owner Password Credentials Grant** (removed in OAuth 2.1)
+- ❌ **PKCE Plain Method** (only S256 is supported per OAuth 2.1 best practices)
+
+### Key Security Requirements
+- **PKCE Enforcement**: All authorization code flows require PKCE with S256 method
+- **Redirect URI Validation**: Exact string matching (with localhost variable port exception per RFC 8252)
+- **Authorization Code**: Single-use, expires in 10 minutes
+- **Token Hashing**: All tokens stored as SHA-256 hashes
+- **Refresh Token Rotation**: New refresh token issued on each use, old token invalidated
+
+## Security Features
+
+### Built-in Security Controls
+
+- **PKCE Enforcement**: All authorization code flows require PKCE (code_challenge/code_verifier)
+- **Redirect URI Validation**: Strict checking against registered URIs
+- **Scope Validation**: Only registered scopes are allowed per client
+- **Token Hashing**: Access and refresh tokens are stored as SHA-256 hashes
+- **Client Secret Hashing**: Confidential client secrets use bcrypt
+- **Internal Mutations**: Critical operations like `issueAuthorizationCode` are not directly accessible
+- **DCR Disabled by Default**: Dynamic Client Registration must be explicitly enabled
+
+### Authorization Flow Security
+
+The `/oauth/authorize` endpoint performs comprehensive validation:
+1. Client ID verification
+2. Redirect URI matching against registered URIs
+3. Scope validation against client's allowed scopes
+4. PKCE requirement (code_challenge with S256 method)
+5. User authentication via `getUserId` hook
+
+## Scopes and Token Types
+
+### Supported Scopes
+
+- **`openid`**: Required for OpenID Connect authentication and ID tokens
+- **`profile`**: Grants access to user profile information (name, picture)
+- **`email`**: Grants access to user email address
+- **`offline_access`**: Enables refresh token issuance for long-lived access
+
+### Refresh Token Requirements
+
+Refresh tokens are **only issued** when the `offline_access` scope is requested and granted during the initial authorization:
+
+- ✅ **With `offline_access`**: Client receives both access token and refresh token
+- ❌ **Without `offline_access`**: Client receives only access token (no refresh token)
+
+**Refresh Token Grant Flow:**
+- Use the `refresh_token` grant type to obtain new access tokens
+- The original authorization must have included the `offline_access` scope
+- Refresh tokens are automatically rotated on each use (old token is invalidated)
+- The new refresh token maintains the same scope as the original
+
+This follows OAuth 2.1 and OpenID Connect specifications, ensuring that long-lived refresh tokens are only issued with explicit user consent.
+
+## OAuth Token Detection Helper
+
+Provides helper functions to distinguish between OAuth tokens and session tokens:
+
+```typescript
+import { isOAuthToken, getOAuthClientId } from "@codefox-inc/oauth-provider";
+
+const identity = await ctx.auth.getUserIdentity();
+
+if (isOAuthToken(identity)) {
+    // Handle OAuth token (MCP client, third-party apps, etc.)
+    const clientId = getOAuthClientId(identity);
+    console.log("OAuth client:", clientId);
+} else {
+    // Handle Convex Auth session (first-party user)
+}
+```
+
+## Setup
+
+### 1. Generate RSA Key Pair and JWKS
+
+```bash
+# Generate private key
+openssl genrsa -out private.pem 2048
+
+# Extract public key
+openssl rsa -in private.pem -pubout -out public.pem
+
+# Generate JWKS (required for token verification)
+# You can use https://mkjwk.org or the following Node.js script:
+node -e "
+const jose = require('jose');
+const fs = require('fs');
+const privateKey = fs.readFileSync('private.pem', 'utf8');
+(async () => {
+  const key = await jose.importPKCS8(privateKey, 'RS256');
+  const jwk = await jose.exportJWK(key);
+  const jwks = {
+    keys: [{
+      ...jwk,
+      use: 'sig',
+      alg: 'RS256',
+      kid: 'default-key'
+    }]
+  };
+  console.log(JSON.stringify(jwks));
+})();
+"
+```
+
+### 2. Set Environment Variables
+
+```env
+OAUTH_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n..."
+OAUTH_JWKS='{"keys":[{"kty":"RSA","n":"...","e":"AQAB","use":"sig","alg":"RS256","kid":"default-key"}]}'
+SITE_URL="https://your-app.example.com"
+CONVEX_SITE_URL="https://your-deployment.convex.site"
+```
+
+### 3. Register Component
+
+```typescript
 // convex/convex.config.ts
 import { defineApp } from "convex/server";
-import oauthProvider from "@codefox-inc/oauth-provider/convex.config.js";
+import oauthProvider from "@codefox-inc/oauth-provider/convex.config";
 
 const app = defineApp();
-app.use(oauthProvider);
+app.use(oauthProvider, { name: "oauthProvider" });
 
 export default app;
 ```
 
-## Usage
+### 4. Configure HTTP Routes
 
-```ts
-import { components } from "./_generated/api";
+#### Option A: Using the Helper Function (Recommended)
 
-export const addComment = mutation({
-  args: { text: v.string(), targetId: v.string() },
-  handler: async (ctx, args) => {
-    return await ctx.runMutation(components.oauthProvider.lib.add, {
-      text: args.text,
-      targetId: args.targetId,
-      userId: await getAuthUserId(ctx),
-    });
-  },
-});
-```
-
-See more example usage in [example.ts](./example/convex/example.ts).
-
-### HTTP Routes
-
-You can register HTTP routes for the component to expose HTTP endpoints:
-
-```ts
+```typescript
+// convex/http.ts
+import { httpAction } from "./_generated/server";
 import { httpRouter } from "convex/server";
-import { registerRoutes } from "@codefox-inc/oauth-provider";
+import { OAuthProvider, registerOAuthRoutes } from "@codefox-inc/oauth-provider";
 import { components } from "./_generated/api";
+import { api } from "./_generated/api";
 
 const http = httpRouter();
 
-registerRoutes(http, components.oauthProvider, {
-  pathPrefix: "/comments",
+const oauthProvider = new OAuthProvider(components.oauthProvider, {
+    privateKey: process.env.OAUTH_PRIVATE_KEY!,
+    jwks: process.env.OAUTH_JWKS!,
+    siteUrl: process.env.SITE_URL!,
+    convexSiteUrl: process.env.CONVEX_SITE_URL,
+    // OPTIONAL: OAuth endpoint prefix (default: "/oauth")
+    // Note: This must match the route prefix used below.
+    // prefix: "/oauth",
+    allowedScopes: ["openid", "profile", "email", "offline_access"],
+
+    // REQUIRED: Authenticate user for authorization endpoint
+    getUserId: async (ctx, request) => {
+        const identity = await ctx.auth.getUserIdentity();
+        return identity?.subject ?? null;
+    },
+
+    // OPTIONAL: Enable dynamic client registration (default: false)
+    allowDynamicClientRegistration: false,
+});
+
+// Register all OAuth routes automatically
+registerOAuthRoutes(http, httpAction, oauthProvider, {
+    siteUrl: process.env.SITE_URL!,
+    // OPTIONAL: Override the prefix used for route registration.
+    // By default, this uses oauthProvider's config prefix.
+    // prefix: "/oauth",
+    getUserProfile: async (ctx, userId) => {
+        // Return user profile for /oauth/userinfo endpoint
+        const user = await ctx.runQuery(api.users.get, { userId });
+        return user ? {
+            sub: userId,
+            name: user.name,
+            email: user.email,
+            picture: user.pictureUrl
+        } : null;
+    },
 });
 
 export default http;
 ```
 
-This will expose a GET endpoint that returns the most recent comment as JSON.
-The endpoint requires a `targetId` query parameter. See
-[http.ts](./example/convex/http.ts) for a complete example.
+#### Option B: Manual Route Registration
 
-<!-- END: Include on https://convex.dev/components -->
+```typescript
+// convex/http.ts
+import { httpAction } from "./_generated/server";
+import { httpRouter } from "convex/server";
+import { OAuthProvider } from "@codefox-inc/oauth-provider";
+import { components } from "./_generated/api";
 
-Run the example:
+const http = httpRouter();
 
-```sh
-npm i
-npm run dev
+const oauthProvider = new OAuthProvider(components.oauthProvider, {
+    privateKey: process.env.OAUTH_PRIVATE_KEY!,
+    jwks: process.env.OAUTH_JWKS!,
+    siteUrl: process.env.SITE_URL!,
+    convexSiteUrl: process.env.CONVEX_SITE_URL,
+    // OPTIONAL: OAuth endpoint prefix (default: "/oauth")
+    // Note: This must match the route prefix used below.
+    // prefix: "/oauth",
+    allowedScopes: ["openid", "profile", "email", "offline_access"],
+
+    // REQUIRED: Authenticate user for authorization endpoint
+    getUserId: async (ctx, request) => {
+        const identity = await ctx.auth.getUserIdentity();
+        return identity?.subject ?? null;
+    },
+});
+
+// OpenID Connect Discovery
+http.route({
+    path: "/oauth/.well-known/openid-configuration",
+    method: "GET",
+    handler: httpAction((ctx, req) =>
+        oauthProvider.handlers.openIdConfiguration(ctx, req)
+    ),
+});
+
+// JWKS endpoint
+http.route({
+    path: "/oauth/.well-known/jwks.json",
+    method: "GET",
+    handler: httpAction((ctx, req) =>
+        oauthProvider.handlers.jwks(ctx, req)
+    ),
+});
+
+// Authorization endpoint (validates and issues auth codes)
+http.route({
+    path: "/oauth/authorize",
+    method: "GET",
+    handler: httpAction((ctx, req) =>
+        oauthProvider.handlers.authorize(ctx, req)
+    ),
+});
+
+// Token endpoint
+http.route({
+    path: "/oauth/token",
+    method: "POST",
+    handler: httpAction((ctx, req) =>
+        oauthProvider.handlers.token(ctx, req)
+    ),
+});
+
+// UserInfo endpoint
+http.route({
+    path: "/oauth/userinfo",
+    method: "GET",
+    handler: httpAction((ctx, req) =>
+        oauthProvider.handlers.userInfo(ctx, req, async (userId) => {
+            const user = await ctx.runQuery(api.users.get, { userId });
+            return user ? { sub: userId, name: user.name, email: user.email } : null;
+        })
+    ),
+});
+
+// Dynamic Client Registration (optional)
+http.route({
+    path: "/oauth/register",
+    method: "POST",
+    handler: httpAction((ctx, req) =>
+        oauthProvider.handlers.register(ctx, req)
+    ),
+});
+
+export default http;
 ```
+
+## UserInfo Endpoint
+
+Requires `openid` scope. Returns claims based on scopes:
+- `openid`: Always returns `sub`
+- `profile`: Adds `name`, `picture`
+- `email`: Adds `email` (and `email_verified` if available)
+
+## Client Registration
+
+### Register OAuth Client (Admin)
+
+```typescript
+// convex/oauthAdmin.ts
+import { mutation } from "./_generated/server";
+import { OAuthProvider } from "@codefox-inc/oauth-provider";
+import { components } from "./_generated/api";
+
+export const registerOAuthClient = mutation({
+    handler: async (ctx, args: {
+        name: string;
+        redirectUris: string[];
+        scopes: string[];
+        type: "confidential" | "public";
+    }) => {
+        // Check admin permissions
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) throw new Error("Unauthorized");
+
+        const oauthProvider = new OAuthProvider(components.oauthProvider, {
+            privateKey: process.env.OAUTH_PRIVATE_KEY!,
+            jwks: process.env.OAUTH_JWKS!,
+            siteUrl: process.env.SITE_URL!,
+        });
+
+        const result = await oauthProvider.registerClient(ctx, {
+            name: args.name,
+            redirectUris: args.redirectUris,
+            scopes: args.scopes,
+            type: args.type,
+        });
+
+        // IMPORTANT: Save clientSecret securely - it's only returned once!
+        return result;
+    },
+});
+```
+
+## Authorization Flow
+
+### Automatic Authorization Handler
+
+The `/oauth/authorize` endpoint handles the complete authorization flow automatically:
+
+```
+GET /oauth/authorize?
+  response_type=code
+  &client_id=CLIENT_ID
+  &redirect_uri=REDIRECT_URI
+  &scope=openid+profile+email
+  &state=STATE
+  &code_challenge=CHALLENGE
+  &code_challenge_method=S256
+  &nonce=NONCE
+```
+
+The handler:
+1. Validates the client ID
+2. Checks redirect_uri against registered URIs
+3. Validates requested scopes
+4. Requires PKCE (code_challenge)
+5. Authenticates the user via `getUserId`
+6. Issues authorization code
+7. Redirects back to the client with the code
+
+### Custom Authorization Flow (Advanced)
+
+If you need custom consent UI, you can use the SDK methods directly:
+
+```typescript
+// convex/oauth.ts
+import { mutation } from "./_generated/server";
+import { OAuthProvider } from "@codefox-inc/oauth-provider";
+import { components } from "./_generated/api";
+
+export const approveAuthorization = mutation({
+    handler: async (ctx, args: {
+        clientId: string;
+        scopes: string[];
+        redirectUri: string;
+        codeChallenge: string;
+        codeChallengeMethod: string;
+        nonce?: string;
+    }) => {
+        // Verify user is authenticated
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) throw new Error("Not authenticated");
+
+        const oauthProvider = new OAuthProvider(components.oauthProvider, {
+            privateKey: process.env.OAUTH_PRIVATE_KEY!,
+            jwks: process.env.OAUTH_JWKS!,
+            siteUrl: process.env.SITE_URL!,
+        });
+
+        // Issue authorization code (automatically creates authorization record)
+        const authCode = await oauthProvider.issueAuthorizationCode(ctx, {
+            userId: identity.subject,
+            clientId: args.clientId,
+            scopes: args.scopes,
+            redirectUri: args.redirectUri,
+            codeChallenge: args.codeChallenge,
+            codeChallengeMethod: args.codeChallengeMethod,
+            nonce: args.nonce,
+        });
+
+        return authCode;
+    },
+});
+```
+
+## Authorization Management
+
+### List User's Authorized Apps
+
+```typescript
+import { query } from "./_generated/server";
+import { OAuthProvider } from "@codefox-inc/oauth-provider";
+import { components } from "./_generated/api";
+
+export const listAuthorizedApps = query({
+    handler: async (ctx) => {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) return [];
+
+        const oauthProvider = new OAuthProvider(components.oauthProvider, {
+            privateKey: process.env.OAUTH_PRIVATE_KEY!,
+            jwks: process.env.OAUTH_JWKS!,
+            siteUrl: process.env.SITE_URL!,
+        });
+
+        return await oauthProvider.listUserAuthorizations(ctx, identity.subject);
+    },
+});
+```
+
+### Revoke Authorization
+
+```typescript
+import { mutation } from "./_generated/server";
+import { OAuthProvider } from "@codefox-inc/oauth-provider";
+import { components } from "./_generated/api";
+
+export const revokeApp = mutation({
+    handler: async (ctx, args: { clientId: string }) => {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) throw new Error("Not authenticated");
+
+        const oauthProvider = new OAuthProvider(components.oauthProvider, {
+            privateKey: process.env.OAUTH_PRIVATE_KEY!,
+            jwks: process.env.OAUTH_JWKS!,
+            siteUrl: process.env.SITE_URL!,
+        });
+
+        // Deletes authorization and all associated tokens
+        await oauthProvider.revokeAuthorization(ctx, identity.subject, args.clientId);
+    },
+});
+```
+
+## Configuration Options
+
+### OAuthConfig
+
+```typescript
+interface OAuthConfig {
+    // REQUIRED: RSA private key in PEM format
+    privateKey: string;
+
+    // REQUIRED: JWKS for token verification (public keys only)
+    jwks: string;
+
+    // REQUIRED: Your application URL
+    siteUrl: string;
+
+    // OPTIONAL: Convex deployment URL (if different from siteUrl)
+    convexSiteUrl?: string;
+
+    // OPTIONAL: OAuth endpoint prefix (default: "/oauth")
+    // Normalized to a leading slash, trailing slash removed; "/" means root.
+    // Must match the route prefix you register in http.ts.
+    prefix?: string;
+
+    // OPTIONAL: Comma-separated list of allowed CORS origins
+    allowedOrigins?: string;
+
+    // OPTIONAL: Allowed scopes for dynamic client registration
+    allowedScopes?: string[];
+
+    // REQUIRED: Function to get authenticated user ID
+    // Must return a Convex users table Id (string)
+    // Returns null if user is not authenticated
+    getUserId?: (ctx: ActionCtx, request: Request) => Promise<string | null> | string | null;
+
+    // OPTIONAL: Enable dynamic client registration (default: false)
+    allowDynamicClientRegistration?: boolean;
+}
+```
+
+## Token Verification
+
+### In Convex Functions
+
+```typescript
+import { query } from "./_generated/server";
+
+export const protectedQuery = query({
+    handler: async (ctx) => {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) throw new Error("Not authenticated");
+
+        // Token is already verified by Convex Auth
+        // Use identity.subject for user ID
+        return { userId: identity.subject };
+    },
+});
+```
+
+### External Token Verification
+
+```typescript
+import { verifyAccessToken } from "@codefox-inc/oauth-provider";
+
+const payload = await verifyAccessToken(
+    token,
+    {
+        jwks: process.env.OAUTH_JWKS!,
+        siteUrl: process.env.SITE_URL!,
+    },
+    issuerUrl
+);
+
+console.log("User ID:", payload.sub);
+console.log("Scopes:", payload.scp);
+console.log("Client ID:", payload.cid);
+```
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OAUTH_PRIVATE_KEY` | Yes | RSA private key (PEM format) |
+| `OAUTH_JWKS` | Yes | JSON Web Key Set for token verification |
+| `SITE_URL` | Yes | Your application's public URL |
+| `CONVEX_SITE_URL` | No | Convex deployment URL (used as issuer if set) |
+| `ALLOWED_ORIGINS` | No | Comma-separated CORS origins |
+
+## Testing
+
+```bash
+npm test
+```
+
+## License
+
+Apache-2.0
