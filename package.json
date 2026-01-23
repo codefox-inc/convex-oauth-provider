@@ -41,7 +41,7 @@
     "test:coverage": "vitest run --coverage --coverage.reporter=text",
     "changeset": "changeset",
     "version": "changeset version && npm install --package-lock-only",
-    "release": "npm run build:clean && changeset publish"
+    "release": "npm run build && changeset publish"
   },
   "files": [
     "dist",
