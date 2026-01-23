@@ -1,6 +1,6 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
-import { hashToken, isHashedToken } from "./token_security";
+import { query } from "./_generated/server.js";
+import { hashToken, isHashedToken } from "./token_security.js";
 
 /**
  * Get OAuth Client by clientId

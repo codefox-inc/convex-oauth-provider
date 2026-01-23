@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import { mutation, internalMutation } from "./_generated/server";
+import { mutation, internalMutation } from "./_generated/server.js";
 import { generateCode } from "../lib/oauth.js";
-import { OAUTH_CONSTANTS } from "./constants";
-import { hashToken, isHashedToken } from "./token_security";
+import { OAUTH_CONSTANTS } from "./constants.js";
+import { hashToken, isHashedToken } from "./token_security.js";
 
 // --------------------------------------------------------------------------
 // Helper Functions

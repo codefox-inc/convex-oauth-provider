@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation } from "./_generated/server.js";
 import * as bcrypt from "bcryptjs";
 import { generateClientSecret } from "../lib/oauth.js";
-import { OAUTH_CONSTANTS } from "./constants";
+import { OAUTH_CONSTANTS } from "./constants.js";
 
 /**
  * OAuth Client Management Mutations

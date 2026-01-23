@@ -1,4 +1,4 @@
-import type { ActionCtx } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server.js";
 import { SignJWT, importPKCS8 } from "jose";
 import {
     getJWKS,
