@@ -869,11 +869,11 @@ export async function registerHandler(
 
         const redirectUris = body.redirect_uris || [];
         const clientName = body.client_name || "Unknown Client";
-        const requestedScopes = body.scope
-            ? body.scope.split(" ").filter(Boolean)
-            : ["openid", "profile", "email"];
         const allowedScopes =
             config.allowedScopes ?? ["openid", "profile", "email", "offline_access"];
+        const requestedScopes = body.scope
+            ? body.scope.split(" ").filter(Boolean)
+            : allowedScopes;
         const invalidScopes = requestedScopes.filter((scope) => !allowedScopes.includes(scope));
         if (invalidScopes.length > 0) {
             throw new OAuthError("invalid_scope", `Unsupported scopes: ${invalidScopes.join(", ")}`);
