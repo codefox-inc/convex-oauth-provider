@@ -29,7 +29,7 @@ jobs:
       - name: Install and build
         run: |
           npm ci
-          npm run build:clean
+          npm run build
 
       - name: Publish package for testing branch
         run: npx pkg-pr-new publish || echo "Have you set up pkg-pr-new for this repo?"
