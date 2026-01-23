@@ -109,17 +109,27 @@ if (isOAuthToken(identity)) {
 
 ## Setup
 
-### 1. Generate RSA Key Pair and JWKS
+### 1. Set Environment Variables
+
+#### With Convex Auth (Recommended)
+
+If you're using [Convex Auth](https://labs.convex.dev/auth), run the setup command:
+
+```bash
+npx @convex-dev/auth
+```
+
+This automatically sets `JWT_PRIVATE_KEY`, `JWKS`, and `SITE_URL`. The OAuth Provider will use these by default.
+
+#### Without Convex Auth
+
+Generate RSA keys manually:
 
 ```bash
 # Generate private key
 openssl genrsa -out private.pem 2048
 
-# Extract public key
-openssl rsa -in private.pem -pubout -out public.pem
-
-# Generate JWKS (required for token verification)
-# You can use https://mkjwk.org or the following Node.js script:
+# Generate JWKS (use https://mkjwk.org or this script)
 node -e "
 const jose = require('jose');
 const fs = require('fs');
@@ -127,29 +137,20 @@ const privateKey = fs.readFileSync('private.pem', 'utf8');
 (async () => {
   const key = await jose.importPKCS8(privateKey, 'RS256');
   const jwk = await jose.exportJWK(key);
-  const jwks = {
-    keys: [{
-      ...jwk,
-      use: 'sig',
-      alg: 'RS256',
-      kid: 'default-key'
-    }]
-  };
-  console.log(JSON.stringify(jwks));
+  console.log(JSON.stringify({ keys: [{ ...jwk, use: 'sig', alg: 'RS256', kid: 'default-key' }] }));
 })();
 "
 ```
 
-### 2. Set Environment Variables
+Set environment variables:
 
-```env
-OAUTH_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n..."
-OAUTH_JWKS='{"keys":[{"kty":"RSA","n":"...","e":"AQAB","use":"sig","alg":"RS256","kid":"default-key"}]}'
-SITE_URL="https://your-app.example.com"
-CONVEX_SITE_URL="https://your-deployment.convex.site"
+```bash
+npx convex env set OAUTH_PRIVATE_KEY "-----BEGIN RSA PRIVATE KEY-----\n..."
+npx convex env set OAUTH_JWKS '{"keys":[...]}'
+npx convex env set SITE_URL "https://your-app.example.com"
 ```
 
-### 3. Register Component
+### 2. Register Component
 
 ```typescript
 // convex/convex.config.ts
@@ -162,7 +163,7 @@ app.use(oauthProvider, { name: "oauthProvider" });
 export default app;
 ```
 
-### 4. Configure HTTP Routes
+### 3. Configure HTTP Routes
 
 #### Option A: Using the Helper Function (Recommended)
 
