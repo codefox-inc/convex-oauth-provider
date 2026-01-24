@@ -6,7 +6,7 @@
   "bugs": {
     "url": "https://github.com/codefox-inc/convex-oauth-provider/issues"
   },
-  "version": "0.2.2",
+  "version": "0.2.3",
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"
