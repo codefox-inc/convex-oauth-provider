@@ -1,5 +1,16 @@
 # @codefox-inc/oauth-provider
 
+## 0.2.3
+
+### Patch Changes
+
+- a666b2d: Improve README documentation
+  - Add "Why?" section explaining the motivation (MCP clients require OAuth)
+  - Simplify environment variable setup (use Convex Auth defaults:
+    JWT_PRIVATE_KEY, JWKS)
+  - Remove confusing Environment Variables Reference section
+  - Streamline code examples
+
 ## 0.2.2
 
 ### Patch Changes
