@@ -6,6 +6,16 @@ OAuth 2.1 / OpenID Connect Provider implemented as a Convex component.
 > Built for [Convex Auth](https://labs.convex.dev/auth) which is currently in **Beta**.
 > Expect breaking changes. Production use at your own risk.
 
+## Why?
+
+Most MCP clients (like Claude Code or ChatGPT) require your app to be an OAuth provider. If you want to connect your Convex app to MCP clients, you need to implement OAuth 2.1.
+
+This component turns your Convex Auth app into a fully compliant OAuth 2.1 provider, so you can:
+- Connect to MCP clients out of the box
+- Let clients register automatically via Dynamic Client Registration
+- Let users control what permissions each app gets
+- Focus on your app, not OAuth complexity
+
 ## Installation
 
 ```bash
@@ -113,13 +123,7 @@ if (isOAuthToken(identity)) {
 
 #### With Convex Auth (Recommended)
 
-If you're using [Convex Auth](https://labs.convex.dev/auth), run the setup command:
-
-```bash
-npx @convex-dev/auth
-```
-
-This automatically sets `JWT_PRIVATE_KEY`, `JWKS`, and `SITE_URL`. The OAuth Provider will use these by default.
+If you're using [Convex Auth](https://labs.convex.dev/auth), you already have the required environment variables configured (`JWT_PRIVATE_KEY`, `JWKS`, `SITE_URL`).
 
 #### Without Convex Auth
 
@@ -145,8 +149,8 @@ const privateKey = fs.readFileSync('private.pem', 'utf8');
 Set environment variables:
 
 ```bash
-npx convex env set OAUTH_PRIVATE_KEY "-----BEGIN RSA PRIVATE KEY-----\n..."
-npx convex env set OAUTH_JWKS '{"keys":[...]}'
+npx convex env set JWT_PRIVATE_KEY "-----BEGIN RSA PRIVATE KEY-----\n..."
+npx convex env set JWKS '{"keys":[...]}'
 npx convex env set SITE_URL "https://your-app.example.com"
 ```
 
@@ -178,23 +182,15 @@ import { api } from "./_generated/api";
 const http = httpRouter();
 
 const oauthProvider = new OAuthProvider(components.oauthProvider, {
-    privateKey: process.env.OAUTH_PRIVATE_KEY!,
-    jwks: process.env.OAUTH_JWKS!,
+    privateKey: process.env.JWT_PRIVATE_KEY!,
+    jwks: process.env.JWKS!,
     siteUrl: process.env.SITE_URL!,
-    convexSiteUrl: process.env.CONVEX_SITE_URL,
-    // OPTIONAL: OAuth endpoint prefix (default: "/oauth")
-    // Note: This must match the route prefix used below.
-    // prefix: "/oauth",
-    allowedScopes: ["openid", "profile", "email", "offline_access"],
 
     // REQUIRED: Authenticate user for authorization endpoint
     getUserId: async (ctx, request) => {
         const identity = await ctx.auth.getUserIdentity();
         return identity?.subject ?? null;
     },
-
-    // OPTIONAL: Enable dynamic client registration (default: false)
-    allowDynamicClientRegistration: false,
 });
 
 // Register all OAuth routes automatically
@@ -230,14 +226,9 @@ import { components } from "./_generated/api";
 const http = httpRouter();
 
 const oauthProvider = new OAuthProvider(components.oauthProvider, {
-    privateKey: process.env.OAUTH_PRIVATE_KEY!,
-    jwks: process.env.OAUTH_JWKS!,
+    privateKey: process.env.JWT_PRIVATE_KEY!,
+    jwks: process.env.JWKS!,
     siteUrl: process.env.SITE_URL!,
-    convexSiteUrl: process.env.CONVEX_SITE_URL,
-    // OPTIONAL: OAuth endpoint prefix (default: "/oauth")
-    // Note: This must match the route prefix used below.
-    // prefix: "/oauth",
-    allowedScopes: ["openid", "profile", "email", "offline_access"],
 
     // REQUIRED: Authenticate user for authorization endpoint
     getUserId: async (ctx, request) => {
@@ -335,8 +326,8 @@ export const registerOAuthClient = mutation({
         if (!identity) throw new Error("Unauthorized");
 
         const oauthProvider = new OAuthProvider(components.oauthProvider, {
-            privateKey: process.env.OAUTH_PRIVATE_KEY!,
-            jwks: process.env.OAUTH_JWKS!,
+            privateKey: process.env.JWT_PRIVATE_KEY!,
+            jwks: process.env.JWKS!,
             siteUrl: process.env.SITE_URL!,
         });
 
@@ -404,8 +395,8 @@ export const approveAuthorization = mutation({
         if (!identity) throw new Error("Not authenticated");
 
         const oauthProvider = new OAuthProvider(components.oauthProvider, {
-            privateKey: process.env.OAUTH_PRIVATE_KEY!,
-            jwks: process.env.OAUTH_JWKS!,
+            privateKey: process.env.JWT_PRIVATE_KEY!,
+            jwks: process.env.JWKS!,
             siteUrl: process.env.SITE_URL!,
         });
 
@@ -440,8 +431,8 @@ export const listAuthorizedApps = query({
         if (!identity) return [];
 
         const oauthProvider = new OAuthProvider(components.oauthProvider, {
-            privateKey: process.env.OAUTH_PRIVATE_KEY!,
-            jwks: process.env.OAUTH_JWKS!,
+            privateKey: process.env.JWT_PRIVATE_KEY!,
+            jwks: process.env.JWKS!,
             siteUrl: process.env.SITE_URL!,
         });
 
@@ -463,8 +454,8 @@ export const revokeApp = mutation({
         if (!identity) throw new Error("Not authenticated");
 
         const oauthProvider = new OAuthProvider(components.oauthProvider, {
-            privateKey: process.env.OAUTH_PRIVATE_KEY!,
-            jwks: process.env.OAUTH_JWKS!,
+            privateKey: process.env.JWT_PRIVATE_KEY!,
+            jwks: process.env.JWKS!,
             siteUrl: process.env.SITE_URL!,
         });
 
@@ -540,7 +531,7 @@ import { verifyAccessToken } from "@codefox-inc/oauth-provider";
 const payload = await verifyAccessToken(
     token,
     {
-        jwks: process.env.OAUTH_JWKS!,
+        jwks: process.env.JWKS!,
         siteUrl: process.env.SITE_URL!,
     },
     issuerUrl
@@ -550,16 +541,6 @@ console.log("User ID:", payload.sub);
 console.log("Scopes:", payload.scp);
 console.log("Client ID:", payload.cid);
 ```
-
-## Environment Variables Reference
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OAUTH_PRIVATE_KEY` | Yes | RSA private key (PEM format) |
-| `OAUTH_JWKS` | Yes | JSON Web Key Set for token verification |
-| `SITE_URL` | Yes | Your application's public URL |
-| `CONVEX_SITE_URL` | No | Convex deployment URL (used as issuer if set) |
-| `ALLOWED_ORIGINS` | No | Comma-separated CORS origins |
 
 ## Testing
 
