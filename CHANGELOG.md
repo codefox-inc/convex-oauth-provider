@@ -1,5 +1,15 @@
 # @codefox-inc/oauth-provider
 
+## 0.2.4
+
+### Patch Changes
+
+- 3c8255a: Update hono to 4.11.7 to fix security vulnerabilities
+  - Fixes cache middleware ignoring `Cache-Control: private` leading to Web
+    Cache Deception
+  - Fixes arbitrary key read in Serve static Middleware (Cloudflare Workers
+    Adapter)
+
 ## 0.2.3
 
 ### Patch Changes
