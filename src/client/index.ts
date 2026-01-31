@@ -49,7 +49,7 @@ export type OAuthProviderConfig = OAuthConfig;
  *
  * const oauthProvider = new OAuthProvider(components.oauthProvider, {
  *   privateKey: process.env.OAUTH_PRIVATE_KEY!,
- *   publicKey: process.env.OAUTH_PUBLIC_KEY!,
+ *   jwks: process.env.OAUTH_JWKS!,
  *   siteUrl: process.env.SITE_URL!,
  * });
  *

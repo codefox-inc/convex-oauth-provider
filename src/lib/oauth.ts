@@ -21,6 +21,7 @@ export interface OAuthConfig {
     convexSiteUrl?: string;  // CONVEX_SITE_URL (optional)
     allowedOrigins?: string; // ALLOWED_ORIGINS (comma-separated, optional)
     allowedScopes?: string[]; // Allowed scopes for dynamic client registration
+    applicationID?: string;  // JWT audience (default: "convex", use "oauth-provider" with Better Auth)
     getUserId?: (ctx: RunActionCtx & { auth: Auth }, request: Request) => Promise<string | null> | string | null;
     checkAuthorization?: (ctx: RunActionCtx & { auth: Auth }, userId: string, clientId?: string) => Promise<boolean>;
     allowDynamicClientRegistration?: boolean;
@@ -190,27 +191,20 @@ export async function sign(
 }
 
 /**
- * Verify Access Token using Public Key (PEM) or JWKS
+ * Verify Access Token using JWKS from config
  */
 export async function verifyAccessToken(
     token: string,
-    publicKeyOrConfig: string | OAuthConfig,
+    config: Pick<OAuthConfig, 'jwks'> & { applicationID?: string },
     issuerUrl: string,
-    expectedAudience: string = "convex"
+    expectedAudience?: string
 ): Promise<JWTPayload> {
-    let publicKey: KeyLike | ReturnType<typeof createLocalJWKSet>;
-
-    if (typeof publicKeyOrConfig === "string") {
-        // Legacy: PEM string
-        publicKey = await getPublicKey(publicKeyOrConfig);
-    } else {
-        // New: OAuthConfig - get key from jwks or publicKey
-        publicKey = await getVerificationKey(publicKeyOrConfig);
-    }
+    const publicKey = await getVerificationKey(config as OAuthConfig);
+    const audience = expectedAudience ?? config.applicationID ?? "convex";
 
     const options = {
         issuer: issuerUrl,
-        audience: expectedAudience,
+        audience,
     };
     const { payload } = typeof publicKey === "function"
         ? await jwtVerify(token, publicKey, options)
