@@ -2,15 +2,15 @@
 
 OAuth 2.1 / OpenID Connect Provider implemented as a Convex component.
 
-> **⚠️ Beta Software**
-> Built for [Convex Auth](https://labs.convex.dev/auth) which is currently in **Beta**.
-> Expect breaking changes. Production use at your own risk.
+> **⚠️ Beta Software** - Production use at your own risk.
+
+Tested with [Convex Auth](https://labs.convex.dev/auth) and [@convex-dev/better-auth](https://labs.convex.dev/better-auth).
 
 ## Why?
 
 Most MCP clients (like Claude Code or ChatGPT) require your app to be an OAuth provider. If you want to connect your Convex app to MCP clients, you need to implement OAuth 2.1.
 
-This component turns your Convex Auth app into a fully compliant OAuth 2.1 provider, so you can:
+This component turns your Convex app into a fully compliant OAuth 2.1 provider, so you can:
 - Connect to MCP clients out of the box
 - Let clients register automatically via Dynamic Client Registration
 - Let users control what permissions each app gets
@@ -19,7 +19,7 @@ This component turns your Convex Auth app into a fully compliant OAuth 2.1 provi
 ## Installation
 
 ```bash
-npm add @codefox-inc/oauth-provider
+npm install @codefox-inc/oauth-provider
 ```
 
 ## Features
@@ -34,7 +34,8 @@ npm add @codefox-inc/oauth-provider
 - **Authorization management** for user consent tracking
 - **JWKS endpoint** for token verification
 
-## OAuth 2.1 Compliance
+<details>
+<summary><strong>OAuth 2.1 Compliance</strong></summary>
 
 This implementation follows [OAuth 2.1 (draft-ietf-oauth-v2-1-14)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-14) specification:
 
@@ -54,7 +55,10 @@ This implementation follows [OAuth 2.1 (draft-ietf-oauth-v2-1-14)](https://datat
 - **Token Hashing**: All tokens stored as SHA-256 hashes
 - **Refresh Token Rotation**: New refresh token issued on each use, old token invalidated
 
-## Security Features
+</details>
+
+<details>
+<summary><strong>Security Features</strong></summary>
 
 ### Built-in Security Controls
 
@@ -75,7 +79,10 @@ The `/oauth/authorize` endpoint performs comprehensive validation:
 4. PKCE requirement (code_challenge with S256 method)
 5. User authentication via `getUserId` hook
 
-## Scopes and Token Types
+</details>
+
+<details>
+<summary><strong>Scopes and Token Types</strong></summary>
 
 ### Supported Scopes
 
@@ -99,6 +106,8 @@ Refresh tokens are **only issued** when the `offline_access` scope is requested 
 
 This follows OAuth 2.1 and OpenID Connect specifications, ensuring that long-lived refresh tokens are only issued with explicit user consent.
 
+</details>
+
 ## OAuth Token Detection Helper
 
 Provides helper functions to distinguish between OAuth tokens and session tokens:
@@ -121,11 +130,26 @@ if (isOAuthToken(identity)) {
 
 ### 1. Set Environment Variables
 
-#### With Convex Auth (Recommended)
+This component works with any authentication system. Choose the setup that matches your stack:
+
+#### Option A: With Convex Auth
 
 If you're using [Convex Auth](https://labs.convex.dev/auth), you already have the required environment variables configured (`JWT_PRIVATE_KEY`, `JWKS`, `SITE_URL`).
 
-#### Without Convex Auth
+#### Option B: With Better Auth
+
+If you're using [@convex-dev/better-auth](https://labs.convex.dev/better-auth), you can share the same keys:
+
+```bash
+npx convex env set OAUTH_PRIVATE_KEY "$(cat private.pem)"  # Or use JWT_PRIVATE_KEY
+npx convex env set OAUTH_JWKS '{"keys":[...]}'             # Or use JWKS
+npx convex env set SITE_URL "https://your-app.example.com"
+```
+
+**Important:** When using Better Auth, set `applicationID: "oauth-provider"` in your OAuthProvider config to distinguish OAuth tokens from Better Auth session tokens.
+
+<details>
+<summary><strong>Option C: Manual Setup</strong></summary>
 
 Generate RSA keys manually:
 
@@ -153,6 +177,8 @@ npx convex env set JWT_PRIVATE_KEY "-----BEGIN RSA PRIVATE KEY-----\n..."
 npx convex env set JWKS '{"keys":[...]}'
 npx convex env set SITE_URL "https://your-app.example.com"
 ```
+
+</details>
 
 ### 2. Register Component
 
@@ -214,7 +240,54 @@ registerOAuthRoutes(http, httpAction, oauthProvider, {
 export default http;
 ```
 
-#### Option B: Manual Route Registration
+#### Option B: With Better Auth
+
+```typescript
+// convex/http.ts
+import { httpAction } from "./_generated/server";
+import { httpRouter } from "convex/server";
+import { OAuthProvider, registerOAuthRoutes } from "@codefox-inc/oauth-provider";
+import { components } from "./_generated/api";
+import { api } from "./_generated/api";
+
+const http = httpRouter();
+
+const oauthProvider = new OAuthProvider(components.oauthProvider, {
+    privateKey: process.env.OAUTH_PRIVATE_KEY ?? process.env.JWT_PRIVATE_KEY!,
+    jwks: process.env.OAUTH_JWKS ?? process.env.JWKS!,
+    siteUrl: process.env.SITE_URL!,
+
+    // IMPORTANT: Set applicationID to distinguish from Better Auth tokens
+    applicationID: "oauth-provider",
+
+    getUserId: async (ctx, request) => {
+        const identity = await ctx.auth.getUserIdentity();
+        return identity?.subject ?? null;
+    },
+});
+
+// Register Better Auth routes first (if using @convex-dev/better-auth)
+// authComponent.registerRoutes(http, createAuth, { cors: true });
+
+// Then register OAuth routes
+registerOAuthRoutes(http, httpAction, oauthProvider, {
+    siteUrl: process.env.SITE_URL!,
+    getUserProfile: async (ctx, userId) => {
+        const user = await ctx.runQuery(api.users.get, { userId });
+        return user ? {
+            sub: userId,
+            name: user.name,
+            email: user.email,
+            picture: user.pictureUrl
+        } : null;
+    },
+});
+
+export default http;
+```
+
+<details>
+<summary><strong>Option C: Manual Route Registration</strong></summary>
 
 ```typescript
 // convex/http.ts
@@ -297,6 +370,8 @@ http.route({
 export default http;
 ```
 
+</details>
+
 ## UserInfo Endpoint
 
 Requires `openid` scope. Returns claims based on scopes:
@@ -304,7 +379,8 @@ Requires `openid` scope. Returns claims based on scopes:
 - `profile`: Adds `name`, `picture`
 - `email`: Adds `email` (and `email_verified` if available)
 
-## Client Registration
+<details>
+<summary><strong>Client Registration</strong></summary>
 
 ### Register OAuth Client (Admin)
 
@@ -344,6 +420,8 @@ export const registerOAuthClient = mutation({
 });
 ```
 
+</details>
+
 ## Authorization Flow
 
 ### Automatic Authorization Handler
@@ -371,7 +449,8 @@ The handler:
 6. Issues authorization code
 7. Redirects back to the client with the code
 
-### Custom Authorization Flow (Advanced)
+<details>
+<summary><strong>Custom Authorization Flow (Advanced)</strong></summary>
 
 If you need custom consent UI, you can use the SDK methods directly:
 
@@ -416,7 +495,10 @@ export const approveAuthorization = mutation({
 });
 ```
 
-## Authorization Management
+</details>
+
+<details>
+<summary><strong>Authorization Management</strong></summary>
 
 ### List User's Authorized Apps
 
@@ -465,9 +547,10 @@ export const revokeApp = mutation({
 });
 ```
 
-## Configuration Options
+</details>
 
-### OAuthConfig
+<details>
+<summary><strong>Configuration Options (OAuthConfig)</strong></summary>
 
 ```typescript
 interface OAuthConfig {
@@ -494,6 +577,10 @@ interface OAuthConfig {
     // OPTIONAL: Allowed scopes for dynamic client registration
     allowedScopes?: string[];
 
+    // OPTIONAL: JWT audience claim (default: "convex")
+    // Set to "oauth-provider" when using Better Auth to distinguish tokens
+    applicationID?: string;
+
     // REQUIRED: Function to get authenticated user ID
     // Must return a Convex users table Id (string)
     // Returns null if user is not authenticated
@@ -503,6 +590,8 @@ interface OAuthConfig {
     allowDynamicClientRegistration?: boolean;
 }
 ```
+
+</details>
 
 ## Token Verification
 
@@ -523,7 +612,8 @@ export const protectedQuery = query({
 });
 ```
 
-### External Token Verification
+<details>
+<summary><strong>External Token Verification</strong></summary>
 
 ```typescript
 import { verifyAccessToken } from "@codefox-inc/oauth-provider";
@@ -533,6 +623,8 @@ const payload = await verifyAccessToken(
     {
         jwks: process.env.JWKS!,
         siteUrl: process.env.SITE_URL!,
+        // If using Better Auth, specify the applicationID
+        // applicationID: "oauth-provider",
     },
     issuerUrl
 );
@@ -541,6 +633,33 @@ console.log("User ID:", payload.sub);
 console.log("Scopes:", payload.scp);
 console.log("Client ID:", payload.cid);
 ```
+
+</details>
+
+<details>
+<summary><strong>Distinguishing OAuth Tokens from Session Tokens</strong></summary>
+
+When using multiple auth systems (e.g., Better Auth + OAuth Provider), you can distinguish tokens by checking the issuer:
+
+```typescript
+import { isOAuthToken, getOAuthClientId } from "@codefox-inc/oauth-provider";
+
+// Option 1: Using helper functions
+const identity = await ctx.auth.getUserIdentity();
+if (isOAuthToken(identity)) {
+    const clientId = getOAuthClientId(identity);
+    // Handle OAuth token (MCP clients, third-party apps)
+} else {
+    // Handle session token (first-party users)
+}
+
+// Option 2: Check issuer directly
+if (identity?.issuer?.includes("/oauth")) {
+    // This is an OAuth token
+}
+```
+
+</details>
 
 ## Testing
 

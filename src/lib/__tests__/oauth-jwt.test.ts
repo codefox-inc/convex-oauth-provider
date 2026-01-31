@@ -106,12 +106,13 @@ describe("OAuth JWT and Utilities", () => {
                 "test-audience",
                 "1h",
                 TEST_PRIVATE_KEY,
-                "https://example.com"
+                "https://example.com",
+                "test-key-1"  // Match the kid in TEST_JWKS
             );
 
             const payload = await verifyAccessToken(
                 token,
-                TEST_PUBLIC_KEY,
+                { jwks: TEST_JWKS },
                 "https://example.com",
                 "test-audience"
             );
@@ -152,12 +153,80 @@ describe("OAuth JWT and Utilities", () => {
                 "user123",
                 "correct-audience",
                 "1h",
-                TEST_PRIVATE_KEY
+                TEST_PRIVATE_KEY,
+                "",
+                "test-key-1"  // Match the kid in TEST_JWKS
             );
 
             await expect(
-                verifyAccessToken(token, TEST_PUBLIC_KEY, "", "wrong-audience")
+                verifyAccessToken(token, { jwks: TEST_JWKS }, "", "wrong-audience")
             ).rejects.toThrow();
+        });
+
+        it("should use applicationID as default audience", async () => {
+            const token = await sign(
+                {},
+                "user123",
+                "oauth-provider",  // audience matches applicationID
+                "1h",
+                TEST_PRIVATE_KEY,
+                "https://example.com",
+                "test-key-1"
+            );
+
+            const payload = await verifyAccessToken(
+                token,
+                { jwks: TEST_JWKS, applicationID: "oauth-provider" },
+                "https://example.com"
+                // No expectedAudience - should use applicationID
+            );
+
+            expect(payload.sub).toBe("user123");
+            expect(payload.aud).toBe("oauth-provider");
+        });
+
+        it("should default to 'convex' when applicationID is not set", async () => {
+            const token = await sign(
+                {},
+                "user123",
+                "convex",  // default audience
+                "1h",
+                TEST_PRIVATE_KEY,
+                "https://example.com",
+                "test-key-1"
+            );
+
+            const payload = await verifyAccessToken(
+                token,
+                { jwks: TEST_JWKS },  // No applicationID
+                "https://example.com"
+                // No expectedAudience - should default to "convex"
+            );
+
+            expect(payload.sub).toBe("user123");
+            expect(payload.aud).toBe("convex");
+        });
+
+        it("should prefer expectedAudience over applicationID", async () => {
+            const token = await sign(
+                {},
+                "user123",
+                "explicit-audience",  // matches expectedAudience
+                "1h",
+                TEST_PRIVATE_KEY,
+                "https://example.com",
+                "test-key-1"
+            );
+
+            const payload = await verifyAccessToken(
+                token,
+                { jwks: TEST_JWKS, applicationID: "oauth-provider" },
+                "https://example.com",
+                "explicit-audience"  // This should take precedence
+            );
+
+            expect(payload.sub).toBe("user123");
+            expect(payload.aud).toBe("explicit-audience");
         });
     });
 
