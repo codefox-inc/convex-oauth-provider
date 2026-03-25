@@ -67,7 +67,7 @@ export const registerClient = mutation({
             const clientSecret = generateClientSecret(OAUTH_CONSTANTS.CLIENT_SECRET_LENGTH);
 
             // Hash the secret
-            const clientSecretHash = await bcrypt.hash(clientSecret, 10);
+            const clientSecretHash = bcrypt.hashSync(clientSecret, 10);
 
             // Store the HASH, return the PLAIN secret once
             await ctx.db.insert("oauthClients", {
@@ -136,7 +136,7 @@ export const verifyClientSecret = mutation({
         }
 
         try {
-            return await bcrypt.compare(args.clientSecret, client.clientSecret);
+            return bcrypt.compareSync(args.clientSecret, client.clientSecret);
         } catch (e) {
             console.error("Client Secret Verification Failed:", e);
             return false;
