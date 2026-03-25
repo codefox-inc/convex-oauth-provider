@@ -1,5 +1,16 @@
 # @codefox-inc/oauth-provider
 
+## 0.3.2
+
+### Patch Changes
+
+- 305247a: Fix DCR failure in Convex mutations by replacing async bcrypt methods
+  with sync variants
+
+  `bcrypt.hash()` and `bcrypt.compare()` use `setTimeout` internally, which is
+  not allowed in Convex queries and mutations. Replaced with `bcrypt.hashSync()`
+  and `bcrypt.compareSync()`.
+
 ## 0.3.1
 
 ### Patch Changes
