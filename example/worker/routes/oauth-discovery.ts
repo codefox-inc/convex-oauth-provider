@@ -32,10 +32,6 @@ function getAppUrl(env: Bindings, requestUrl: string): string {
   return env.SITE_URL || process.env.SITE_URL || new URL(requestUrl).origin
 }
 
-function joinUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`
-}
-
 function getCanonicalMcpResource(env: Bindings, requestUrl: string): URL {
   const configuredResource = env.MCP_RESOURCE || process.env.MCP_RESOURCE
   const baseUrl = getAppUrl(env, requestUrl)
