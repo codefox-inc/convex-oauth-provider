@@ -25,14 +25,14 @@ This example demonstrates the OAuth 2.1/OpenID Connect Provider with:
 From the project root:
 
 ```bash
-npm install
+bun install
 ```
 
 ### 2. Configure Environment Variables
 
 #### Convex Backend (`.env.local` in project root)
 
-`npx convex dev` will automatically create `.env.local` with `CONVEX_DEPLOYMENT`, `CONVEX_URL`, and `CONVEX_SITE_URL`.
+`bunx convex dev` will automatically create `.env.local` with `CONVEX_DEPLOYMENT`, `CONVEX_URL`, and `CONVEX_SITE_URL`.
 
 **Important:** You must manually add `VITE_CONVEX_URL` for the React frontend:
 
@@ -49,9 +49,9 @@ VITE_CONVEX_URL=https://your-deployment.convex.cloud
 **Set Convex environment variables** (backend configuration):
 
 ```bash
-npx convex env set SITE_URL http://localhost:5173
+bunx convex env set SITE_URL http://localhost:5173
 # For production:
-# npx convex env set SITE_URL https://your-app.com --prod
+# bunx convex env set SITE_URL https://your-app.com --prod
 ```
 
 #### Cloudflare Worker (`example/.dev.vars`)
@@ -74,8 +74,8 @@ SITE_URL=http://localhost:8787
 ### 3. Initialize Convex
 
 ```bash
-npm run build
-npx convex dev --once
+bun run build
+bunx convex dev --once
 ```
 
 ## Development
@@ -83,7 +83,7 @@ npx convex dev --once
 Start all services (from project root):
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 This starts:

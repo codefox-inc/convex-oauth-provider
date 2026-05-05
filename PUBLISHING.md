@@ -20,7 +20,7 @@ Add `NPM_TOKEN` to GitHub repository secrets:
 When you make changes that should be released:
 
 ```sh
-npm run changeset
+bun run changeset
 ```
 
 This will prompt you to:
@@ -38,26 +38,26 @@ If you need to release manually:
 npm login
 
 # 2. Version the package (applies changesets)
-npm run version
+bun run version
 
 # 3. Build and publish
-npm run release
+bun run release
 ```
 
 ## Package Scripts
 
-- `npm run changeset` - Create a new changeset
-- `npm run version` - Apply changesets and update package version
-- `npm run release` - Build and publish to registry
+- `bun run changeset` - Create a new changeset
+- `bun run version` - Apply changesets and update package version
+- `bun run release` - Build and publish to registry
 
 ## Building a Test Package
 
 ```sh
-npm run build:clean
+bun run build:clean
 npm pack
 ```
 
 You can then install the .tgz file in another project:
 ```sh
-npm install ./path/to/codefox-inc-oauth-provider-0.1.0.tgz
+bun add ./path/to/codefox-inc-oauth-provider-0.1.0.tgz
 ```

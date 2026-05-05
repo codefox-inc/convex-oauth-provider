@@ -321,7 +321,7 @@ describe("OAuth 2.1 Flow", () => {
 
     test("Token Handler: authorization_code grant issues tokens with ID token and refresh token", async () => {
         // Generate valid RSA key pair for JWT signing
-        const { privateKey, publicKey } = await generateKeyPair("RS256");
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
         const privateKeyPem = await exportPKCS8(privateKey);
         const jwk = await exportJWK(publicKey);
         const jwks = JSON.stringify({ keys: [{ ...jwk, kid: "test-key", use: "sig", alg: "RS256" }] });
@@ -1877,7 +1877,7 @@ describe("OAuth 2.1 Flow", () => {
 
     test("Token Handler: handles rotateRefreshToken error with invalid_grant", async () => {
         // Generate valid RSA key pair for JWT signing
-        const { privateKey, publicKey } = await generateKeyPair("RS256");
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
         const privateKeyPem = await exportPKCS8(privateKey);
         const jwk = await exportJWK(publicKey);
         const jwks = JSON.stringify({ keys: [{ ...jwk, kid: "test-key", use: "sig", alg: "RS256" }] });
@@ -1949,7 +1949,7 @@ describe("OAuth 2.1 Flow", () => {
 
     test("Token Handler: handles rotateRefreshToken error (non-invalid_grant)", async () => {
         // Generate valid RSA key pair for JWT signing
-        const { privateKey, publicKey } = await generateKeyPair("RS256");
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
         const privateKeyPem = await exportPKCS8(privateKey);
         const jwk = await exportJWK(publicKey);
         const jwks = JSON.stringify({ keys: [{ ...jwk, kid: "test-key", use: "sig", alg: "RS256" }] });
@@ -2563,7 +2563,7 @@ describe("OAuth 2.1 Flow", () => {
         scopes: string[],
         options: { clientId?: string } = {}
     ) {
-        const { publicKey, privateKey } = await generateKeyPair("RS256");
+        const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
         const jwk = await exportJWK(publicKey);
         const jwks = JSON.stringify({
             keys: [{
@@ -2866,7 +2866,7 @@ codeHash: "test-code-hash",
     });
 
     test("Token Handler: refresh_token grant succeeds with offline_access scope", async () => {
-        const { privateKey, publicKey } = await generateKeyPair("RS256");
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
         const privateKeyPEM = await exportPKCS8(privateKey);
         const publicJWK = await exportJWK(publicKey);
 

@@ -6,7 +6,7 @@ import {
     importSPKI,
     createLocalJWKSet
 } from "jose";
-import type { JWTPayload, KeyLike } from "jose";
+import type { JWTPayload } from "jose";
 import type { Auth } from "convex/server";
 import type { RunActionCtx } from "./convex-types.js";
 
@@ -218,7 +218,7 @@ export async function verifyAccessToken(
  */
 async function getVerificationKey(
     config: OAuthConfig
-): Promise<KeyLike | ReturnType<typeof createLocalJWKSet>> {
+): Promise<ReturnType<typeof createLocalJWKSet>> {
     const cached = jwksKeyCache.get(config.jwks);
     if (cached) return cached;
 

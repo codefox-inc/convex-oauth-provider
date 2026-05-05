@@ -10,22 +10,22 @@ This is an OAuth 2.1 / OpenID Connect Provider implemented as a Convex component
 
 ```bash
 # Development (starts Convex backend, Vite frontend, Cloudflare Worker, and build watcher)
-npm run dev
+bun run dev
 
 # Build
-npm run build              # TypeScript compilation
-npm run build:codegen      # Generate Convex code + build
-npm run build:clean        # Clean rebuild
+bun run build              # TypeScript compilation
+bun run build:codegen      # Generate Convex code + build
+bun run build:clean        # Clean rebuild
 
 # Testing
-npm test                   # Run all tests
-npm run test:watch         # Watch mode
-npm test -- -t "test name" # Run single test by name
-npm test -- src/component/__tests__/oauth.test.ts  # Run single file
+bun run test                   # Run all tests
+bun run test:watch             # Watch mode
+bun run test -- -t "test name" # Run single test by name
+bun run test -- src/component/__tests__/oauth.test.ts  # Run single file
 
 # Quality
-npm run typecheck          # TypeScript check (includes example/)
-npm run lint               # ESLint
+bun run typecheck          # TypeScript check (includes example/)
+bun run lint               # ESLint
 ```
 
 ## Architecture

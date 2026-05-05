@@ -19,7 +19,7 @@ This component turns your Convex app into a fully compliant OAuth 2.1 provider, 
 ## Installation
 
 ```bash
-npm install @codefox-inc/oauth-provider
+bun add @codefox-inc/oauth-provider
 ```
 
 ## Features
@@ -141,9 +141,9 @@ If you're using [Convex Auth](https://labs.convex.dev/auth), you already have th
 If you're using [@convex-dev/better-auth](https://labs.convex.dev/better-auth), you can share the same keys:
 
 ```bash
-npx convex env set OAUTH_PRIVATE_KEY "$(cat private.pem)"  # Or use JWT_PRIVATE_KEY
-npx convex env set OAUTH_JWKS '{"keys":[...]}'             # Or use JWKS
-npx convex env set SITE_URL "https://your-app.example.com"
+bunx convex env set OAUTH_PRIVATE_KEY "$(cat private.pem)"  # Or use JWT_PRIVATE_KEY
+bunx convex env set OAUTH_JWKS '{"keys":[...]}'             # Or use JWKS
+bunx convex env set SITE_URL "https://your-app.example.com"
 ```
 
 **Important:** When using Better Auth, set `applicationID: "oauth-provider"` in your OAuthProvider config to distinguish OAuth tokens from Better Auth session tokens.
@@ -173,9 +173,9 @@ const privateKey = fs.readFileSync('private.pem', 'utf8');
 Set environment variables:
 
 ```bash
-npx convex env set JWT_PRIVATE_KEY "-----BEGIN RSA PRIVATE KEY-----\n..."
-npx convex env set JWKS '{"keys":[...]}'
-npx convex env set SITE_URL "https://your-app.example.com"
+bunx convex env set JWT_PRIVATE_KEY "-----BEGIN RSA PRIVATE KEY-----\n..."
+bunx convex env set JWKS '{"keys":[...]}'
+bunx convex env set SITE_URL "https://your-app.example.com"
 ```
 
 </details>
@@ -664,7 +664,7 @@ if (identity?.issuer?.includes("/oauth")) {
 ## Testing
 
 ```bash
-npm test
+bun run test
 ```
 
 ## License
