@@ -19,23 +19,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          cache-dependency-path: package.json
-          node-version: "20.x"
-          cache: "npm"
+          bun-version: "1.3.13"
 
       - name: Install and build
         run: |
-          npm ci
-          npm run build
+          bun install --frozen-lockfile
+          bun run build
 
       - name: Publish package for testing branch
-        run: npx pkg-pr-new publish || echo "Have you set up pkg-pr-new for this repo?"
+        run: bunx pkg-pr-new publish || echo "Have you set up pkg-pr-new for this repo?"
 
       - name: Test
         run: |
-          npm run test
-          npm run typecheck
-          npm run lint
+          bun run test
+          bun run typecheck
+          bun run lint
