@@ -10,22 +10,22 @@ This is an OAuth 2.1 / OpenID Connect Provider implemented as a Convex component
 
 ```bash
 # Development (starts Convex backend, Vite frontend, Cloudflare Worker, and build watcher)
-npm run dev
+bun run dev
 
 # Build
-npm run build              # TypeScript compilation
-npm run build:codegen      # Generate Convex code + build
-npm run build:clean        # Clean rebuild
+bun run build              # TypeScript compilation
+bun run build:codegen      # Generate Convex code + build
+bun run build:clean        # Clean rebuild
 
 # Testing
-npm test                   # Run all tests
-npm run test:watch         # Watch mode
-npm test -- -t "test name" # Run single test by name
-npm test -- src/component/__tests__/oauth.test.ts  # Run single file
+bun run test                   # Run all tests
+bun run test:watch             # Watch mode
+bun run test -- -t "test name" # Run single test by name
+bun run test -- src/component/__tests__/oauth.test.ts  # Run single file
 
 # Quality
-npm run typecheck          # TypeScript check (includes example/)
-npm run lint               # ESLint
+bun run typecheck          # TypeScript check (includes example/)
+bun run lint               # ESLint
 ```
 
 ## Architecture
@@ -61,7 +61,7 @@ example/              # Full working example
 1. **Authorization**: Client → `/oauth/authorize` → validates → redirects to `SITE_URL` consent page
 2. **Consent**: User approves → `issueAuthorizationCode()` → creates auth code + authorization record
 3. **Token Exchange**: Client → `/oauth/token` with code + PKCE verifier → returns JWT access token
-4. **API Access**: Client uses Bearer token → Convex validates via JWKS
+4. **Resource Access**: Resource servers validate the JWT access token using JWKS, issuer, `typ`, audience, and required scopes
 
 ### Component Tables
 
@@ -75,10 +75,20 @@ example/              # Full working example
 ### Security Requirements (OAuth 2.1)
 
 - PKCE with S256 **required** for all flows (plain method rejected)
-- Redirect URI exact match (with RFC 8252 localhost variable port exception)
+- Redirect URI exact match (with RFC 8252 loopback variable port exception only)
+- RFC 8707 `resource` is bound to authorization codes and refresh tokens; token requests cannot add a new resource later
+- JWT access tokens follow RFC 9068 conventions (`typ: at+jwt`, `client_id`, `scope`, `jti`)
+- `offline_access` requires explicit OIDC consent (`prompt` contains `consent`)
+- ID tokens include `auth_time`; `max_age` is handled safely when the host cannot prove the current authentication time
 - All tokens stored as SHA-256 hashes
 - Client secrets hashed with bcrypt
 - Authorization codes single-use with replay detection
+
+### Host Integration Notes
+
+- Custom consent UIs must preserve the authorization request `resource` parameter and pass it to `OAuthProvider.issueAuthorizationCode`.
+- Resource servers should terminate bearer tokens: verify `iss`, `aud`, `typ`, expiration, and scopes locally, then call their backend with an internal credential instead of passing the inbound OAuth token through.
+- The example Worker uses `MCP_CONVEX_AUTH_TOKEN` as a Convex admin/internal Worker-to-Convex credential, then passes the verified OAuth `sub` into internal task functions for user scoping. This is example host plumbing, not an OAuth signing key.
 
 ### Testing
 
@@ -94,6 +104,10 @@ Required for OAuth Provider:
 - `OAUTH_JWKS` - JSON Web Key Set
 - `SITE_URL` - App's public URL (consent page location)
 - `CONVEX_SITE_URL` - Convex deployment URL (issuer)
+
+Example Worker:
+- `MCP_CONVEX_AUTH_TOKEN` - Convex admin/internal credential used after inbound MCP access token verification
+- `MCP_RESOURCE` - Optional canonical MCP protected resource URI; defaults to the Worker `/mcp` URL
 
 ## Example App
 

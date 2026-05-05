@@ -12,6 +12,7 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "noEmit": true,
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@codefox-inc/oauth-provider": ["../src/client"],

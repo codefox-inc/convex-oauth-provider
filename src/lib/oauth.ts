@@ -6,7 +6,7 @@ import {
     importSPKI,
     createLocalJWKSet
 } from "jose";
-import type { JWTPayload, KeyLike } from "jose";
+import type { JWTPayload } from "jose";
 import type { Auth } from "convex/server";
 import type { RunActionCtx } from "./convex-types.js";
 
@@ -177,7 +177,7 @@ export async function sign(
     const privateKey = await getPrivateKey(privateKeyPEM);
 
     const jwt = new SignJWT(payload)
-        .setProtectedHeader({ alg: "RS256", kid: keyId })
+        .setProtectedHeader({ alg: "RS256", typ: "at+jwt", kid: keyId })
         .setIssuedAt()
         .setSubject(subject)
         .setAudience(audience)
@@ -206,9 +206,13 @@ export async function verifyAccessToken(
         issuer: issuerUrl,
         audience,
     };
-    const { payload } = typeof publicKey === "function"
+    const { payload, protectedHeader } = typeof publicKey === "function"
         ? await jwtVerify(token, publicKey, options)
         : await jwtVerify(token, publicKey, options);
+
+    if (protectedHeader.typ !== "at+jwt" && protectedHeader.typ !== "application/at+jwt") {
+        throw new Error("Invalid access token typ");
+    }
 
     return payload;
 }
@@ -218,7 +222,7 @@ export async function verifyAccessToken(
  */
 async function getVerificationKey(
     config: OAuthConfig
-): Promise<KeyLike | ReturnType<typeof createLocalJWKSet>> {
+): Promise<ReturnType<typeof createLocalJWKSet>> {
     const cached = jwksKeyCache.get(config.jwks);
     if (cached) return cached;
 

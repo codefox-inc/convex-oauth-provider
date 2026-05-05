@@ -13,6 +13,8 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
+const validCodeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
 describe("OAuth 2.1 RFC Compliance", () => {
   describe("Section 4.1.1 - PKCE Requirements", () => {
     test("MUST support code_challenge and code_verifier parameters", async () => {
@@ -104,7 +106,7 @@ describe("OAuth 2.1 RFC Compliance", () => {
           clientId: client.clientId,
           scopes: ["openid"],
           redirectUri: "https://example.com/callback",
-          codeChallenge: "test-verifier",
+          codeChallenge: validCodeChallenge,
           codeChallengeMethod: "plain",
         })
       ).rejects.toThrow(/plain.*not.*support/i);
@@ -351,6 +353,60 @@ describe("OAuth 2.1 RFC Compliance", () => {
       });
       expect(authCode2).toBeDefined();
     });
+
+    test("MUST only allow port variance for loopback redirect URIs", async () => {
+      const t = convexTest(schema, modules);
+
+      const client = await t.mutation(api.clientManagement.registerClient, {
+        name: "Native App Strict Loopback",
+        type: "public",
+        redirectUris: ["http://127.0.0.1/callback?flow=oauth"],
+        scopes: ["openid"],
+      });
+
+      const authCode = await t.mutation(api.mutations.issueAuthorizationCode, {
+        userId: "user123",
+        clientId: client.clientId,
+        scopes: ["openid"],
+        redirectUri: "http://127.0.0.1:8080/callback?flow=oauth",
+        codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        codeChallengeMethod: "S256",
+      });
+      expect(authCode).toBeDefined();
+
+      await expect(
+        t.mutation(api.mutations.issueAuthorizationCode, {
+          userId: "user123",
+          clientId: client.clientId,
+          scopes: ["openid"],
+          redirectUri: "https://127.0.0.1:8080/callback?flow=oauth",
+          codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          codeChallengeMethod: "S256",
+        })
+      ).rejects.toThrow(/redirect/i);
+
+      await expect(
+        t.mutation(api.mutations.issueAuthorizationCode, {
+          userId: "user123",
+          clientId: client.clientId,
+          scopes: ["openid"],
+          redirectUri: "http://127.0.0.1:8080/different?flow=oauth",
+          codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          codeChallengeMethod: "S256",
+        })
+      ).rejects.toThrow(/redirect/i);
+
+      await expect(
+        t.mutation(api.mutations.issueAuthorizationCode, {
+          userId: "user123",
+          clientId: client.clientId,
+          scopes: ["openid"],
+          redirectUri: "http://127.0.0.1:8080/callback?flow=other",
+          codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          codeChallengeMethod: "S256",
+        })
+      ).rejects.toThrow(/redirect/i);
+    });
   });
 
   describe("Section 3.2.3 - Token Response", () => {
@@ -484,7 +540,7 @@ describe("OAuth 2.1 RFC Compliance", () => {
       expect(true).toBe(true); // Placeholder - verify no password grant implementation
     });
 
-    test("RFC 6749 4.1.3: redirect_uri REQUIRED if included in authorization request", async () => {
+    test("OAuth 2.1: redirect_uri is optional at token endpoint and validated only when supplied", async () => {
       const t = convexTest(schema, modules);
 
       const client = await t.mutation(api.clientManagement.registerClient, {
@@ -503,15 +559,14 @@ describe("OAuth 2.1 RFC Compliance", () => {
         codeChallengeMethod: "S256",
       });
 
-      // redirect_uri省略時はエラー
-      await expect(
-        t.mutation(api.mutations.consumeAuthCode, {
-          code: authCode,
-          clientId: client.clientId,
-          codeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
-          // redirect_uriを省略
-        })
-      ).rejects.toThrow("redirect_uri_required");
+      // redirect_uri 省略時も許可
+      const omittedRedirectData = await t.mutation(api.mutations.consumeAuthCode, {
+        code: authCode,
+        clientId: client.clientId,
+        codeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      });
+
+      expect(omittedRedirectData.userId).toBeDefined();
 
       // redirect_uri付きなら成功
       const authCode2 = await t.mutation(api.mutations.issueAuthorizationCode, {
@@ -740,6 +795,19 @@ describe("OAuth 2.1 RFC Compliance", () => {
       });
 
       expect(tokensAfter.length).toBe(0); // All tokens should be deleted
+
+      await expect(
+        t.mutation(api.mutations.saveTokens, {
+          accessToken: "replayed-access-token",
+          refreshToken: "replayed-refresh-token",
+          clientId: client.clientId,
+          userId: "user123",
+          scopes: ["openid", "profile"],
+          expiresAt: Date.now() + 3600000,
+          refreshTokenExpiresAt: Date.now() + 2592000000,
+          authorizationCode: codeData.codeHash,
+        })
+      ).rejects.toThrow("authorization_code_reuse_detected");
     });
 
     test("RFC Line 1136: Single use enforcement - code is marked as used", async () => {

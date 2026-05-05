@@ -15,6 +15,9 @@ import { hashToken, isHashedToken } from "./token_security.js";
 export function isLoopbackRedirectUri(uri: string): boolean {
   try {
     const parsed = new URL(uri);
+    if (parsed.username || parsed.password || parsed.hash) {
+      return false;
+    }
     return (
       parsed.hostname === "127.0.0.1" ||
       parsed.hostname === "::1" ||
@@ -23,6 +26,62 @@ export function isLoopbackRedirectUri(uri: string): boolean {
   } catch {
     return false;
   }
+}
+
+const PKCE_PARAMETER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/;
+
+function isValidPkceParameter(value: string): boolean {
+  return PKCE_PARAMETER_PATTERN.test(value);
+}
+
+export function isValidResourceUri(resource: string): boolean {
+    try {
+        const parsed = new URL(resource);
+        return parsed.protocol.length > 0 && parsed.hash === "";
+    } catch {
+        return false;
+    }
+}
+
+function validateResourceUri(resource: string | undefined): void {
+    if (resource !== undefined && !isValidResourceUri(resource)) {
+        throw new Error("invalid_target");
+    }
+}
+
+async function verifyPkce(
+    codeChallengeMethod: string,
+    codeChallenge: string,
+    codeVerifier: string
+) {
+    if (codeChallengeMethod !== "S256" && codeChallengeMethod !== "plain") {
+        throw new Error("unsupported_code_challenge_method");
+    }
+
+    if (!isValidPkceParameter(codeVerifier)) {
+        throw new Error("invalid_code_verifier");
+    }
+
+    if (codeChallengeMethod === "S256") {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(codeVerifier);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashBase64 = btoa(String.fromCharCode(...hashArray))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
+
+        if (hashBase64 !== codeChallenge) {
+            throw new Error("invalid_code_verifier");
+        }
+    } else if (codeChallengeMethod === "plain") {
+        if (codeVerifier !== codeChallenge) {
+            throw new Error("invalid_code_verifier");
+        }
+    } else {
+        throw new Error("unsupported_code_challenge_method");
+    }
 }
 
 /**
@@ -40,13 +99,21 @@ export function matchRedirectUri(requested: string, registered: string[]): boole
   if (isLoopbackRedirectUri(requested)) {
     try {
       const reqUrl = new URL(requested);
+      if (reqUrl.protocol !== "http:" || reqUrl.username || reqUrl.password || reqUrl.hash) {
+        return false;
+      }
       for (const regUri of registered) {
         if (isLoopbackRedirectUri(regUri)) {
           const regUrl = new URL(regUri);
-          // ホストとパスが一致すればポート違いを許容
+          // loopback 例外は port の差分だけを許容する
           if (
+            regUrl.protocol === "http:" &&
+            !regUrl.username &&
+            !regUrl.password &&
+            !regUrl.hash &&
             reqUrl.hostname === regUrl.hostname &&
-            reqUrl.pathname === regUrl.pathname
+            reqUrl.pathname === regUrl.pathname &&
+            reqUrl.search === regUrl.search
           ) {
             return true;
           }
@@ -78,11 +145,18 @@ export const issueAuthorizationCode = mutation({
         codeChallenge: v.string(),
         codeChallengeMethod: v.string(),
         nonce: v.optional(v.string()),
+        resource: v.optional(v.string()),
+        authTime: v.optional(v.number()),
     },
     handler: async (ctx, args) => {
+        validateResourceUri(args.resource);
+
         // 1. PKCE検証（RFC 7636）
         if (!args.codeChallenge || args.codeChallenge.trim() === "") {
             throw new Error("code_challenge required");
+        }
+        if (!isValidPkceParameter(args.codeChallenge)) {
+            throw new Error("invalid_code_challenge");
         }
         if (args.codeChallengeMethod !== "S256") {
             throw new Error("plain code_challenge_method is not supported, use S256");
@@ -124,6 +198,8 @@ export const issueAuthorizationCode = mutation({
             codeChallenge: args.codeChallenge,
             codeChallengeMethod: args.codeChallengeMethod,
             nonce: args.nonce,
+            resource: args.resource,
+            authTime: args.authTime ?? Math.floor(Date.now() / 1000),
             expiresAt: Date.now() + OAUTH_CONSTANTS.CODE_EXPIRY_MS,
         });
 
@@ -144,6 +220,7 @@ export const consumeAuthCode = mutation({
         clientId: v.string(),
         redirectUri: v.optional(v.string()), // OAuth 2.1: optional
         codeVerifier: v.string(),
+        resource: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         // 1. Find Code (by hash)
@@ -165,8 +242,35 @@ export const consumeAuthCode = mutation({
             throw new Error("invalid_grant");
         }
 
+        const validateCodeRequest = async () => {
+            if (authCode.clientId !== args.clientId) {
+                throw new Error("invalid_grant");
+            }
+
+            // OAuth 2.1: token request redirect_uri is optional.
+            // If supplied, it must exactly match the stored authorization code binding.
+            if (args.redirectUri && authCode.redirectUri !== args.redirectUri) {
+                throw new Error("redirect_uri_mismatch");
+            }
+
+            if (!authCode.resource && args.resource) {
+                throw new Error("invalid_target");
+            }
+            if (authCode.resource && args.resource && authCode.resource !== args.resource) {
+                throw new Error("invalid_target");
+            }
+
+            await verifyPkce(
+                authCode.codeChallengeMethod,
+                authCode.codeChallenge,
+                args.codeVerifier
+            );
+        };
+
         // RFC Line 1136: Detect authorization code reuse (replay attack)
         if (authCode.usedAt !== undefined) {
+            await validateCodeRequest();
+
             // Code was already used - this is a replay attack
             // Revoke all tokens issued with this code
             const tokensToRevoke = await ctx.db
@@ -178,8 +282,7 @@ export const consumeAuthCode = mutation({
                 await ctx.db.delete(token._id);
             }
 
-            // Delete the code
-            await ctx.db.delete(authCode._id);
+            await ctx.db.patch(authCode._id, { replayDetectedAt: Date.now() });
 
             // Return error status (cannot throw because it would rollback token deletion)
             return {
@@ -189,47 +292,12 @@ export const consumeAuthCode = mutation({
         }
 
         // 2. Validation
-        if (authCode.clientId !== args.clientId) {
-            throw new Error("invalid_client");
-        }
-
         if (authCode.expiresAt < Date.now()) {
             await ctx.db.delete(authCode._id);
             throw new Error("invalid_grant");
         }
 
-        // redirect_uri validation: 発行時に設定されている場合は必須
-        // RFC 6749 Section 4.1.3: redirect_uri REQUIRED if included in authorization request
-        if (authCode.redirectUri) {
-            if (!args.redirectUri) {
-                throw new Error("redirect_uri_required");
-            }
-            if (authCode.redirectUri !== args.redirectUri) {
-                throw new Error("redirect_uri_mismatch");
-            }
-        }
-
-        // PKCE検証（エラーメッセージ改善）
-        if (authCode.codeChallengeMethod === "S256") {
-            const encoder = new TextEncoder();
-            const data = encoder.encode(args.codeVerifier);
-            const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashBase64 = btoa(String.fromCharCode(...hashArray))
-                .replace(/\+/g, "-")
-                .replace(/\//g, "_")
-                .replace(/=+$/, "");
-
-            if (hashBase64 !== authCode.codeChallenge) {
-                throw new Error("invalid_code_verifier");
-            }
-        } else if (authCode.codeChallengeMethod === "plain") {
-            if (args.codeVerifier !== authCode.codeChallenge) {
-                throw new Error("invalid_code_verifier");
-            }
-        } else {
-            throw new Error("unsupported_code_challenge_method");
-        }
+        await validateCodeRequest();
 
         // 3. Mark Code as Used (RFC Line 1136: detect replay)
         await ctx.db.patch(authCode._id, { usedAt: Date.now() });
@@ -241,6 +309,8 @@ export const consumeAuthCode = mutation({
             codeChallengeMethod: authCode.codeChallengeMethod,
             redirectUri: authCode.redirectUri,
             nonce: authCode.nonce,
+            resource: authCode.resource,
+            authTime: authCode.authTime,
             codeHash, // Return code hash to link tokens
         };
     },
@@ -262,8 +332,22 @@ export const saveTokens = mutation({
         expiresAt: v.number(),
         refreshTokenExpiresAt: v.optional(v.number()),
         authorizationCode: v.optional(v.string()), // Hashed code for replay detection (RFC Line 1136)
+        resource: v.optional(v.string()),
+        audience: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
+        const authorizationCode = args.authorizationCode;
+        if (authorizationCode) {
+            const authCode = await ctx.db
+                .query("oauthCodes")
+                .withIndex("by_code", (q) => q.eq("code", authorizationCode))
+                .unique();
+
+            if (authCode?.replayDetectedAt !== undefined) {
+                throw new Error("authorization_code_reuse_detected");
+            }
+        }
+
         // Hash tokens before storing for security
         // The original tokens are returned to the client, hashes are stored
         await ctx.db.insert("oauthTokens", {
@@ -293,6 +377,8 @@ export const rotateRefreshToken = mutation({
         scopes: v.array(v.string()),
         expiresAt: v.number(),
         refreshTokenExpiresAt: v.optional(v.number()),
+        resource: v.optional(v.string()),
+        audience: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         // Hash the old refresh token for lookup
@@ -363,6 +449,8 @@ export const rotateRefreshToken = mutation({
             scopes: args.scopes,
             expiresAt: args.expiresAt,
             refreshTokenExpiresAt: args.refreshTokenExpiresAt,
+            resource: args.resource,
+            audience: args.audience,
         });
     },
 });
@@ -437,8 +525,11 @@ export const upsertAuthorization = mutation({
         userId: v.string(),
         clientId: v.string(),
         scopes: v.array(v.string()),
+        resource: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
+        validateResourceUri(args.resource);
+
         const existing = await ctx.db
             .query("oauthAuthorizations")
             .withIndex("by_user_client", (q) =>
@@ -453,6 +544,7 @@ export const upsertAuthorization = mutation({
             const mergedScopes = [...new Set([...existing.scopes, ...args.scopes])];
             await ctx.db.patch(existing._id, {
                 scopes: mergedScopes,
+                resource: args.resource ?? existing.resource,
                 lastUsedAt: now,
             });
             return existing._id;
@@ -462,6 +554,7 @@ export const upsertAuthorization = mutation({
                 userId: args.userId,
                 clientId: args.clientId,
                 scopes: args.scopes,
+                resource: args.resource,
                 authorizedAt: now,
                 lastUsedAt: now,
             });

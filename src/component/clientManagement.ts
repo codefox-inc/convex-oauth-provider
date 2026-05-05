@@ -20,6 +20,7 @@ function isValidRedirectUri(uri: string): boolean {
     }
 
     if (parsed.hash) return false;
+    if (parsed.username || parsed.password) return false;
 
     const host = parsed.hostname.toLowerCase();
     const isLoopback =
@@ -29,8 +30,21 @@ function isValidRedirectUri(uri: string): boolean {
 
     if (parsed.protocol === "https:") return true;
     if (parsed.protocol === "http:" && isLoopback) return true;
+    if (isValidPrivateUseRedirectUri(parsed)) return true;
 
     return false;
+}
+
+function isValidPrivateUseRedirectUri(parsed: URL): boolean {
+    const scheme = parsed.protocol.slice(0, -1);
+    const reverseDomainStyle = /^[a-z][a-z0-9]*(\.[a-z0-9][a-z0-9-]*){2,}$/i;
+    return (
+        reverseDomainStyle.test(scheme) &&
+        parsed.hostname === "" &&
+        parsed.host === "" &&
+        parsed.pathname.startsWith("/") &&
+        parsed.pathname.length > 1
+    );
 }
 
 /**
@@ -48,11 +62,26 @@ export const registerClient = mutation({
         logoUrl: v.optional(v.string()),
         tosUrl: v.optional(v.string()),
         policyUrl: v.optional(v.string()),
+        tokenEndpointAuthMethod: v.optional(v.union(
+            v.literal("client_secret_basic"),
+            v.literal("client_secret_post"),
+            v.literal("none"),
+        )),
         isInternal: v.optional(v.boolean()),
     },
     handler: async (ctx, args) => {
         if (args.redirectUris.length === 0) {
             throw new Error("redirect_uris required");
+        }
+        if (
+            args.type === "public" &&
+            args.tokenEndpointAuthMethod &&
+            args.tokenEndpointAuthMethod !== "none"
+        ) {
+            throw new Error("invalid_client_metadata: public clients must use token_endpoint_auth_method none");
+        }
+        if (args.type === "confidential" && args.tokenEndpointAuthMethod === "none") {
+            throw new Error("invalid_client_metadata: confidential clients must authenticate at the token endpoint");
         }
         const invalidRedirect = args.redirectUris.find((uri) => !isValidRedirectUri(uri));
         if (invalidRedirect) {
@@ -83,6 +112,7 @@ export const registerClient = mutation({
                 logoUrl: args.logoUrl,
                 tosUrl: args.tosUrl,
                 policyUrl: args.policyUrl,
+                tokenEndpointAuthMethod: args.tokenEndpointAuthMethod ?? "client_secret_basic",
                 isInternal: args.isInternal,
             });
 
@@ -107,6 +137,7 @@ export const registerClient = mutation({
             logoUrl: args.logoUrl,
             tosUrl: args.tosUrl,
             policyUrl: args.policyUrl,
+            tokenEndpointAuthMethod: args.tokenEndpointAuthMethod ?? "none",
             isInternal: args.isInternal,
         });
 

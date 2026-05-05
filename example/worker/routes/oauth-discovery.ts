@@ -9,9 +9,11 @@ type Bindings = {
   CONVEX_SITE_URL?: string
   SITE_URL?: string
   OAUTH_PREFIX?: string
+  MCP_RESOURCE?: string
 }
 
 const oauthDiscoveryRoutes = new Hono<{ Bindings: Bindings }>()
+const PROTECTED_RESOURCE_SCOPES = ['openid', 'profile', 'email']
 
 // Helper: Get Convex Site URL for OAuth endpoints
 function getConvexSiteUrl(env: Bindings): string {
@@ -28,6 +30,25 @@ function getConvexSiteUrl(env: Bindings): string {
 // Helper: Get App URL (public-facing URL)
 function getAppUrl(env: Bindings, requestUrl: string): string {
   return env.SITE_URL || process.env.SITE_URL || new URL(requestUrl).origin
+}
+
+function getCanonicalMcpResource(env: Bindings, requestUrl: string): URL {
+  const configuredResource = env.MCP_RESOURCE || process.env.MCP_RESOURCE
+  const baseUrl = getAppUrl(env, requestUrl)
+  const resourceUrl = configuredResource
+    ? new URL(
+      configuredResource.startsWith('http')
+        ? configuredResource
+        : configuredResource.startsWith('/')
+          ? configuredResource
+          : `/${configuredResource}`,
+      baseUrl
+    )
+    : new URL('/mcp', baseUrl)
+
+  resourceUrl.hash = ''
+  resourceUrl.search = ''
+  return resourceUrl
 }
 
 // Helper: Generate OAuth discovery response
@@ -47,7 +68,12 @@ function getOAuthDiscoveryResponse(env: Bindings, requestUrl: string) {
     registration_endpoint: `${convexSiteUrl}${prefix}/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
-    code_challenge_methods_supported: ['S256', 'plain'],
+    code_challenge_methods_supported: ['S256'],
+    token_endpoint_auth_methods_supported: [
+      'client_secret_basic',
+      'client_secret_post',
+      'none',
+    ],
     scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
   }
 }
@@ -116,15 +142,22 @@ oauthDiscoveryRoutes.get('/.well-known/oauth-protected-resource', (c) => {
   return c.json({
     resource: appUrl,
     authorization_servers: [`${convexSiteUrl}${prefix}`],
-    scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
+    scopes_supported: PROTECTED_RESOURCE_SCOPES,
   })
 })
 
 // Handle wildcard for protected resource (e.g., /mcp appended)
 oauthDiscoveryRoutes.get('/.well-known/oauth-protected-resource/*', (c) => {
   const convexSiteUrl = getConvexSiteUrl(c.env)
-  const appUrl = getAppUrl(c.env, c.req.url)
   const prefix = c.env.OAUTH_PREFIX || process.env.OAUTH_PREFIX || "/oauth"
+  const resourcePath = new URL(c.req.url).pathname.replace(
+    '/.well-known/oauth-protected-resource',
+    ''
+  )
+  const canonicalResource = getCanonicalMcpResource(c.env, c.req.url)
+  if (resourcePath !== canonicalResource.pathname) {
+    return c.notFound()
+  }
 
   if (!convexSiteUrl) {
     return c.json(
@@ -134,9 +167,9 @@ oauthDiscoveryRoutes.get('/.well-known/oauth-protected-resource/*', (c) => {
   }
 
   return c.json({
-    resource: appUrl,
+    resource: canonicalResource.toString(),
     authorization_servers: [`${convexSiteUrl}${prefix}`],
-    scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
+    scopes_supported: PROTECTED_RESOURCE_SCOPES,
   })
 })
 

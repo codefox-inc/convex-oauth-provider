@@ -18,6 +18,11 @@ export default defineSchema({
         clientId: v.string(), // Public ID (UUID v4)
         clientSecret: v.optional(v.string()), // Hashed Secret (for confidential clients)
         type: v.union(v.literal("confidential"), v.literal("public")),
+        tokenEndpointAuthMethod: v.optional(v.union(
+            v.literal("client_secret_basic"),
+            v.literal("client_secret_post"),
+            v.literal("none"),
+        )),
 
         redirectUris: v.array(v.string()), // Must be exact match
         allowedScopes: v.array(v.string()), // e.g. ["openid", "profile", "email"]
@@ -42,9 +47,12 @@ export default defineSchema({
         codeChallenge: v.string(),
         codeChallengeMethod: v.string(), // "S256" or "plain"
         nonce: v.optional(v.string()), // OIDC Nonce
+        resource: v.optional(v.string()),
+        authTime: v.optional(v.number()), // OIDC auth_time (seconds since epoch)
 
         expiresAt: v.number(), // Usually 10 minutes
         usedAt: v.optional(v.number()), // RFC Line 1136: Track code usage for replay detection
+        replayDetectedAt: v.optional(v.number()), // Tombstone marker to reject late token saves
     }).index("by_code", ["code"]),
 
     /**
@@ -64,6 +72,8 @@ export default defineSchema({
 
         // RFC Line 1136: Track which authorization code issued this token for replay detection
         authorizationCode: v.optional(v.string()), // Hashed authorization code
+        resource: v.optional(v.string()),
+        audience: v.optional(v.string()),
     })
         .index("by_access_token", ["accessToken"])
         .index("by_refresh_token", ["refreshToken"])
@@ -80,6 +90,7 @@ export default defineSchema({
 
         // Authorized scopes
         scopes: v.array(v.string()),
+        resource: v.optional(v.string()),
 
         // When the user first authorized this client
         authorizedAt: v.number(),

@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ConvexClient } from 'convex/browser'
 import { registerTaskTools } from './tools/task'
 
-export function createMcpServer(convex: ConvexClient): McpServer {
+export function createMcpServer(convex: ConvexClient, userId: string): McpServer {
   const server = new McpServer(
     {
       name: 'OAuth Provider Task Manager',
@@ -19,7 +19,7 @@ export function createMcpServer(convex: ConvexClient): McpServer {
   )
 
   // Register task tools
-  registerTaskTools(server, convex)
+  registerTaskTools(server, convex, userId)
 
   return server
 }

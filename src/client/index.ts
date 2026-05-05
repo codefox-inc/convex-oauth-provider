@@ -185,6 +185,7 @@ export class OAuthProvider {
         codeChallenge?: string;
         codeChallengeMethod?: string;
         nonce?: string;
+        resource?: string;
     }): Promise<string> {
         if (!args.codeChallenge) {
             throw new Error("codeChallenge required");
@@ -199,6 +200,7 @@ export class OAuthProvider {
             userId: args.userId,
             clientId: args.clientId,
             scopes: args.scopes,
+            ...(args.resource ? { resource: args.resource } : {}),
         });
 
         // 2. Issue the authorization code
@@ -228,6 +230,7 @@ export class OAuthProvider {
         logoUrl?: string;
         tosUrl?: string;
         policyUrl?: string;
+        tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post" | "none";
     }) {
         return this.api.clientManagement.registerClient(ctx, args);
     }
@@ -267,6 +270,7 @@ export class OAuthProvider {
         userId: string;
         clientId: string;
         scopes: string[];
+        resource?: string;
     }) {
         return ctx.runMutation(this.component.mutations.upsertAuthorization, args);
     }

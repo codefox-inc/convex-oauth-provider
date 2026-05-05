@@ -5,6 +5,7 @@
     "moduleResolution": "Bundler",
     "noEmit": true,
     "types": ["node"],
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@codefox-inc/oauth-provider": ["../../src/client"],

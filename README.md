@@ -19,7 +19,7 @@ This component turns your Convex app into a fully compliant OAuth 2.1 provider, 
 ## Installation
 
 ```bash
-npm install @codefox-inc/oauth-provider
+bun add @codefox-inc/oauth-provider
 ```
 
 ## Features
@@ -27,6 +27,8 @@ npm install @codefox-inc/oauth-provider
 - **OAuth 2.1 compliant** authorization and token endpoints
 - **OpenID Connect Discovery** for automatic client configuration
 - **PKCE required** for all authorization code flows (S256 only)
+- **RFC 8707 resource indicators** for audience-bound access tokens
+- **RFC 9068 JWT access tokens** (`typ: at+jwt`, `client_id`, `scope`, `jti`)
 - **Secure token storage** using SHA-256 hashing for tokens and authorization codes
 - **JWT access tokens** with RS256 signing
 - **Refresh token rotation** for enhanced security
@@ -37,7 +39,7 @@ npm install @codefox-inc/oauth-provider
 <details>
 <summary><strong>OAuth 2.1 Compliance</strong></summary>
 
-This implementation follows [OAuth 2.1 (draft-ietf-oauth-v2-1-14)](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-14) specification:
+This implementation follows [OAuth 2.1](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1) and related OAuth/OIDC specifications:
 
 ### Supported Grant Types
 - ✅ **Authorization Code with PKCE** (public and confidential clients)
@@ -50,7 +52,9 @@ This implementation follows [OAuth 2.1 (draft-ietf-oauth-v2-1-14)](https://datat
 
 ### Key Security Requirements
 - **PKCE Enforcement**: All authorization code flows require PKCE with S256 method
-- **Redirect URI Validation**: Exact string matching (with localhost variable port exception per RFC 8252)
+- **Redirect URI Validation**: Exact string matching (with RFC 8252 loopback variable port exception only)
+- **Resource Binding**: `resource` values are bound to the authorization grant and refresh token
+- **Access Token Audience**: Access token `aud` is the authorized `resource`, or the configured default audience
 - **Authorization Code**: Single-use, expires in 10 minutes
 - **Token Hashing**: All tokens stored as SHA-256 hashes
 - **Refresh Token Rotation**: New refresh token issued on each use, old token invalidated
@@ -93,7 +97,7 @@ The `/oauth/authorize` endpoint performs comprehensive validation:
 
 ### Refresh Token Requirements
 
-Refresh tokens are **only issued** when the `offline_access` scope is requested and granted during the initial authorization:
+Refresh tokens are **only issued** when the `offline_access` scope is requested and granted during the initial authorization. For OpenID Connect requests, `offline_access` requires `prompt=consent` (or a space-delimited prompt value that includes `consent`):
 
 - ✅ **With `offline_access`**: Client receives both access token and refresh token
 - ❌ **Without `offline_access`**: Client receives only access token (no refresh token)
@@ -105,6 +109,22 @@ Refresh tokens are **only issued** when the `offline_access` scope is requested 
 - The new refresh token maintains the same scope as the original
 
 This follows OAuth 2.1 and OpenID Connect specifications, ensuring that long-lived refresh tokens are only issued with explicit user consent.
+
+</details>
+
+<details>
+<summary><strong>Resource Indicators and Audience Binding</strong></summary>
+
+This provider supports RFC 8707 `resource` indicators for MCP and other resource-server flows.
+
+- `resource` is optional on the authorization request.
+- If present, it must be an absolute URI without a fragment.
+- The authorization code stores the approved `resource`.
+- The token request may repeat the same `resource`, but cannot add a new one that was not approved.
+- Refresh tokens preserve the same resource/audience binding during rotation.
+- Access tokens use the authorized `resource` as `aud`; otherwise they use `applicationID` or the default `convex` audience.
+
+For custom consent UIs, preserve the incoming `resource` parameter and pass it to `issueAuthorizationCode`.
 
 </details>
 
@@ -141,9 +161,9 @@ If you're using [Convex Auth](https://labs.convex.dev/auth), you already have th
 If you're using [@convex-dev/better-auth](https://labs.convex.dev/better-auth), you can share the same keys:
 
 ```bash
-npx convex env set OAUTH_PRIVATE_KEY "$(cat private.pem)"  # Or use JWT_PRIVATE_KEY
-npx convex env set OAUTH_JWKS '{"keys":[...]}'             # Or use JWKS
-npx convex env set SITE_URL "https://your-app.example.com"
+bunx convex env set OAUTH_PRIVATE_KEY "$(cat private.pem)"  # Or use JWT_PRIVATE_KEY
+bunx convex env set OAUTH_JWKS '{"keys":[...]}'             # Or use JWKS
+bunx convex env set SITE_URL "https://your-app.example.com"
 ```
 
 **Important:** When using Better Auth, set `applicationID: "oauth-provider"` in your OAuthProvider config to distinguish OAuth tokens from Better Auth session tokens.
@@ -173,9 +193,9 @@ const privateKey = fs.readFileSync('private.pem', 'utf8');
 Set environment variables:
 
 ```bash
-npx convex env set JWT_PRIVATE_KEY "-----BEGIN RSA PRIVATE KEY-----\n..."
-npx convex env set JWKS '{"keys":[...]}'
-npx convex env set SITE_URL "https://your-app.example.com"
+bunx convex env set JWT_PRIVATE_KEY "-----BEGIN RSA PRIVATE KEY-----\n..."
+bunx convex env set JWKS '{"keys":[...]}'
+bunx convex env set SITE_URL "https://your-app.example.com"
 ```
 
 </details>
@@ -434,6 +454,7 @@ GET /oauth/authorize?
   &client_id=CLIENT_ID
   &redirect_uri=REDIRECT_URI
   &scope=openid+profile+email
+  &resource=https://api.example.com/mcp
   &state=STATE
   &code_challenge=CHALLENGE
   &code_challenge_method=S256
@@ -445,9 +466,10 @@ The handler:
 2. Checks redirect_uri against registered URIs
 3. Validates requested scopes
 4. Requires PKCE (code_challenge)
-5. Authenticates the user via `getUserId`
-6. Issues authorization code
-7. Redirects back to the client with the code
+5. Validates and binds `resource` when provided
+6. Authenticates the user via `getUserId`
+7. Issues authorization code
+8. Redirects back to the client with the code
 
 <details>
 <summary><strong>Custom Authorization Flow (Advanced)</strong></summary>
@@ -468,6 +490,7 @@ export const approveAuthorization = mutation({
         codeChallenge: string;
         codeChallengeMethod: string;
         nonce?: string;
+        resource?: string;
     }) => {
         // Verify user is authenticated
         const identity = await ctx.auth.getUserIdentity();
@@ -488,12 +511,15 @@ export const approveAuthorization = mutation({
             codeChallenge: args.codeChallenge,
             codeChallengeMethod: args.codeChallengeMethod,
             nonce: args.nonce,
+            resource: args.resource,
         });
 
         return authCode;
     },
 });
 ```
+
+When the authorization request contains `resource`, show it in the consent UI and pass it through unchanged. If the token request asks for a `resource` that was not stored on the authorization code, the token endpoint returns `invalid_target`.
 
 </details>
 
@@ -664,7 +690,7 @@ if (identity?.issuer?.includes("/oauth")) {
 ## Testing
 
 ```bash
-npm test
+bun run test
 ```
 
 ## License

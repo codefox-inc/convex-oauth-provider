@@ -9,6 +9,9 @@ import type { OAuthComponentAPI } from "../handlers";
 import type { OAuthConfig } from "../../lib/oauth";
 
 const modules = import.meta.glob("../**/*.ts");
+const validCodeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+const validCodeVerifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const wrongCodeVerifier = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 describe("OAuth 2.1 Flow", () => {
     let t: ReturnType<typeof convexTest>;
@@ -321,7 +324,7 @@ describe("OAuth 2.1 Flow", () => {
 
     test("Token Handler: authorization_code grant issues tokens with ID token and refresh token", async () => {
         // Generate valid RSA key pair for JWT signing
-        const { privateKey, publicKey } = await generateKeyPair("RS256");
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
         const privateKeyPem = await exportPKCS8(privateKey);
         const jwk = await exportJWK(publicKey);
         const jwks = JSON.stringify({ keys: [{ ...jwk, kid: "test-key", use: "sig", alg: "RS256" }] });
@@ -788,7 +791,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
         });
 
@@ -844,7 +847,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20admin&state=abc&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20admin&state=abc&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -903,7 +906,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20profile&state=state-123&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20profile&state=state-123&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -962,7 +965,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -1181,7 +1184,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=challenge&code_challenge_method=plain", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=plain", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -1240,7 +1243,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://client.example.com/start",
@@ -1450,7 +1453,7 @@ describe("OAuth 2.1 Flow", () => {
             method: "POST",
             body: JSON.stringify({
                 redirect_uris: ["https://cb"],
-                token_endpoint_auth_method: "client_secret_basic",
+                token_endpoint_auth_method: "private_key_jwt",
             }),
             headers: { "Content-Type": "application/json" },
         });
@@ -1561,7 +1564,7 @@ describe("OAuth 2.1 Flow", () => {
         const response = await registerHandler({} as any, request, config, apiStub);
         expect(response.status).toBe(400);
         const body = await response.json();
-        expect(body.error).toBe("invalid_request");
+        expect(body.error).toBe("invalid_redirect_uri");
         expect(body.error_description).toContain("Invalid redirect_uri");
     });
 
@@ -1877,7 +1880,7 @@ describe("OAuth 2.1 Flow", () => {
 
     test("Token Handler: handles rotateRefreshToken error with invalid_grant", async () => {
         // Generate valid RSA key pair for JWT signing
-        const { privateKey, publicKey } = await generateKeyPair("RS256");
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
         const privateKeyPem = await exportPKCS8(privateKey);
         const jwk = await exportJWK(publicKey);
         const jwks = JSON.stringify({ keys: [{ ...jwk, kid: "test-key", use: "sig", alg: "RS256" }] });
@@ -1949,7 +1952,7 @@ describe("OAuth 2.1 Flow", () => {
 
     test("Token Handler: handles rotateRefreshToken error (non-invalid_grant)", async () => {
         // Generate valid RSA key pair for JWT signing
-        const { privateKey, publicKey } = await generateKeyPair("RS256");
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
         const privateKeyPem = await exportPKCS8(privateKey);
         const jwk = await exportJWK(publicKey);
         const jwks = JSON.stringify({ keys: [{ ...jwk, kid: "test-key", use: "sig", alg: "RS256" }] });
@@ -2061,7 +2064,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -2093,7 +2096,7 @@ describe("OAuth 2.1 Flow", () => {
             userId,
             redirectUri: "https://cb",
             scopes: [],
-            codeChallenge: "c",
+            codeChallenge: validCodeChallenge,
             codeChallengeMethod: "S256"  // Changed from "plain" to "S256"
         });
 
@@ -2563,7 +2566,7 @@ describe("OAuth 2.1 Flow", () => {
         scopes: string[],
         options: { clientId?: string } = {}
     ) {
-        const { publicKey, privateKey } = await generateKeyPair("RS256");
+        const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
         const jwk = await exportJWK(publicKey);
         const jwks = JSON.stringify({
             keys: [{
@@ -2581,14 +2584,17 @@ describe("OAuth 2.1 Flow", () => {
         };
         const payload: Record<string, unknown> = {
             scp: scopes.join(" "),
+            scope: scopes.join(" "),
+            jti: crypto.randomUUID(),
         };
         if (options.clientId) {
             payload.cid = options.clientId;
+            payload.client_id = options.clientId;
         }
         const token = await new SignJWT({
             ...payload,
         })
-            .setProtectedHeader({ alg: "RS256", kid: "default-key" })
+            .setProtectedHeader({ alg: "RS256", typ: "at+jwt", kid: "default-key" })
             .setIssuedAt()
             .setSubject("user-1")
             .setAudience("convex")
@@ -2765,8 +2771,7 @@ describe("OAuth 2.1 Flow", () => {
 
         expect(response.status).toBe(401);
         const wwwAuth = response.headers.get("WWW-Authenticate");
-        expect(wwwAuth).toContain("invalid_token");
-        expect(wwwAuth).toContain("Missing bearer token");
+        expect(wwwAuth).toBe('Bearer realm="userinfo"');
     });
 
     test("UserInfo: returns 401 when Authorization header is malformed", async () => {
@@ -2781,8 +2786,7 @@ describe("OAuth 2.1 Flow", () => {
 
         expect(response.status).toBe(401);
         const wwwAuth = response.headers.get("WWW-Authenticate");
-        expect(wwwAuth).toContain("invalid_token");
-        expect(wwwAuth).toContain("Missing bearer token");
+        expect(wwwAuth).toBe('Bearer realm="userinfo"');
     });
 
     test("UserInfo: returns 401 when token verification fails", async () => {
@@ -2866,7 +2870,7 @@ codeHash: "test-code-hash",
     });
 
     test("Token Handler: refresh_token grant succeeds with offline_access scope", async () => {
-        const { privateKey, publicKey } = await generateKeyPair("RS256");
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
         const privateKeyPEM = await exportPKCS8(privateKey);
         const publicJWK = await exportJWK(publicKey);
 
@@ -2950,7 +2954,7 @@ codeHash: "test-code-hash",
             userId,
             redirectUri: "https://cb",
             scopes: ["openid"],
-            codeChallenge: "challenge",
+            codeChallenge: validCodeChallenge,
             codeChallengeMethod: "S256"
         });
 
@@ -2959,7 +2963,7 @@ codeHash: "test-code-hash",
                 code,
                 clientId: client.clientId,
                 redirectUri: "https://wrong-redirect",
-                codeVerifier: "verifier",
+                codeVerifier: validCodeVerifier,
             })
         ).rejects.toThrow("redirect_uri_mismatch");
     });
@@ -2978,7 +2982,7 @@ codeHash: "test-code-hash",
             userId,
             redirectUri: "https://cb",
             scopes: ["openid"],
-            codeChallenge: "correct-challenge",
+            codeChallenge: validCodeChallenge,
             codeChallengeMethod: "S256"
         });
 
@@ -2987,7 +2991,7 @@ codeHash: "test-code-hash",
                 code,
                 clientId: client.clientId,
                 redirectUri: "https://cb",
-                codeVerifier: "wrong-verifier",
+                codeVerifier: wrongCodeVerifier,
             })
         ).rejects.toThrow("invalid_code_verifier");
     });
@@ -3044,7 +3048,7 @@ codeHash: "test-code-hash",
                 userId,
                 redirectUri: "https://cb",
                 scopes: ["openid"],
-                codeChallenge: "challenge",
+                codeChallenge: validCodeChallenge,
                 codeChallengeMethod: "S256",
                 expiresAt: Date.now() - 1000, // Expired
             });
@@ -3078,7 +3082,7 @@ codeHash: "test-code-hash",
                 userId,
                 redirectUri: "https://cb",
                 scopes: ["openid"],
-                codeChallenge: "challenge",
+                codeChallenge: validCodeChallenge,
                 codeChallengeMethod: "MD5", // Invalid method
                 expiresAt: Date.now() + 600000,
             });
@@ -3089,7 +3093,7 @@ codeHash: "test-code-hash",
                 code,
                 clientId: client.clientId,
                 redirectUri: "https://cb",
-                codeVerifier: "verifier",
+                codeVerifier: validCodeVerifier,
             })
         ).rejects.toThrow("unsupported_code_challenge_method");
     });
@@ -3268,7 +3272,7 @@ codeHash: "test-code-hash",
             userId,
             redirectUri: "https://cb",
             scopes: ["openid"],
-            codeChallenge: "challenge",
+            codeChallenge: validCodeChallenge,
             codeChallengeMethod: "S256"
         });
 

@@ -25,14 +25,14 @@ This example demonstrates the OAuth 2.1/OpenID Connect Provider with:
 From the project root:
 
 ```bash
-npm install
+bun install
 ```
 
 ### 2. Configure Environment Variables
 
 #### Convex Backend (`.env.local` in project root)
 
-`npx convex dev` will automatically create `.env.local` with `CONVEX_DEPLOYMENT`, `CONVEX_URL`, and `CONVEX_SITE_URL`.
+`bunx convex dev` will automatically create `.env.local` with `CONVEX_DEPLOYMENT`, `CONVEX_URL`, and `CONVEX_SITE_URL`.
 
 **Important:** You must manually add `VITE_CONVEX_URL` for the React frontend:
 
@@ -49,9 +49,9 @@ VITE_CONVEX_URL=https://your-deployment.convex.cloud
 **Set Convex environment variables** (backend configuration):
 
 ```bash
-npx convex env set SITE_URL http://localhost:5173
+bunx convex env set SITE_URL http://localhost:5173
 # For production:
-# npx convex env set SITE_URL https://your-app.com --prod
+# bunx convex env set SITE_URL https://your-app.com --prod
 ```
 
 #### Cloudflare Worker (`example/.dev.vars`)
@@ -69,13 +69,18 @@ Edit `.dev.vars`:
 CONVEX_URL=https://your-deployment.convex.cloud
 CONVEX_SITE_URL=https://your-deployment.convex.site
 SITE_URL=http://localhost:8787
+MCP_CONVEX_AUTH_TOKEN=<convex-admin-token-for-internal-calls>
+# Optional, defaults to ${SITE_URL}/mcp
+# MCP_RESOURCE=http://localhost:8787/mcp
 ```
+
+`MCP_CONVEX_AUTH_TOKEN` is an internal Convex credential used by the Worker when it calls Convex after the inbound MCP access token has been verified. The example uses it with `setAdminAuth` so the Worker can call internal functions while passing the verified OAuth `sub` as the task owner. The Worker must not pass the MCP client's bearer token through to Convex.
 
 ### 3. Initialize Convex
 
 ```bash
-npm run build
-npx convex dev --once
+bun run build
+bunx convex dev --once
 ```
 
 ## Development
@@ -83,7 +88,7 @@ npx convex dev --once
 Start all services (from project root):
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 This starts:
@@ -132,7 +137,7 @@ OAuth authorization flow:
 1. Claude CLI initiates OAuth flow
 2. Browser opens `https://{deployment}.convex.site/oauth/authorize`
 3. Convex redirects to `http://localhost:5173/oauth/authorize` (consent UI)
-4. User approves → redirects back to Convex → MCP server receives tokens
+4. User approves, including the MCP `resource` value → redirects back to Convex → MCP server receives tokens
 
 Use MCP tools via Claude:
 - `task-list`: Get all tasks
@@ -195,11 +200,25 @@ The MCP client uses Dynamic Client Registration (DCR), so you do not need to man
 - `/.well-known/oauth-protected-resource` - Protected Resource Discovery
 - `/mcp` - MCP Server Endpoint
 
+## MCP Resource Server Notes
+
+- Access tokens must be sent in the `Authorization: Bearer` header. Query string tokens are rejected.
+- The Worker validates access tokens with the authorization server JWKS, issuer, `typ`, and the canonical MCP resource audience.
+- `MCP_RESOURCE` can be a full URL or a path. The protected resource metadata URL is derived from the same canonical resource.
+- Protected Resource Metadata does not advertise `offline_access`; that scope is handled by the authorization server and consent flow.
+- Convex calls use `MCP_CONVEX_AUTH_TOKEN` instead of the inbound MCP bearer token to avoid token pass-through. Task tools pass the verified OAuth `sub` into internal Convex functions so every request stays scoped to the MCP user.
+
 ## Troubleshooting
 
 ### "Protected resource does not match" error
 
 Ensure `.dev.vars` has `SITE_URL=http://localhost:8787` (Worker URL, not Frontend URL)
+
+If you set `MCP_RESOURCE`, make sure the authorization request, token request, protected resource metadata, and access token audience all use the same canonical resource URI.
+
+### "Missing MCP_CONVEX_AUTH_TOKEN configuration" error
+
+Set `MCP_CONVEX_AUTH_TOKEN` in `example/.dev.vars` or the Worker deployment environment. It should be a Worker-to-Convex admin/internal credential that can call the example internal task functions, not an OAuth access token and not your OAuth signing private key.
 
 ### OAuth consent shows black screen
 

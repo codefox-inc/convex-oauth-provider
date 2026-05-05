@@ -37,6 +37,7 @@ export const issueAuthorizationCode = mutation({
     codeChallenge: v.optional(v.string()),
     codeChallengeMethod: v.optional(v.string()),
     nonce: v.optional(v.string()),
+    resource: v.optional(v.string()),
     state: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -72,6 +73,7 @@ export const issueAuthorizationCode = mutation({
       codeChallenge: args.codeChallenge ?? undefined,
       codeChallengeMethod: args.codeChallengeMethod ?? undefined,
       nonce: args.nonce,
+      resource: args.resource,
     });
   },
 });
