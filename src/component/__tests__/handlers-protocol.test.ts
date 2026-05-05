@@ -723,6 +723,40 @@ describe("OAuth handler protocol checks", () => {
         );
     });
 
+    test("DCR preserves provider-supported offline_access for later authorization requests", async () => {
+        const registerClient = vi.fn(async () => ({
+            clientId: "client",
+            clientSecret: "secret",
+            clientIdIssuedAt: 0,
+        }));
+
+        const response = await registerHandler(
+            {} as any,
+            new Request("https://example.com/oauth/register", {
+                method: "POST",
+                body: JSON.stringify({
+                    redirect_uris: ["https://client.example.com/cb"],
+                    scope: "openid profile email",
+                    token_endpoint_auth_method: "none",
+                }),
+                headers: { "Content-Type": "application/json" },
+            }),
+            config,
+            makeApi({ clientManagement: { registerClient } as any })
+        );
+
+        expect(response.status).toBe(201);
+        expect(registerClient).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                scopes: ["openid", "profile", "email", "offline_access"],
+            })
+        );
+        await expect(response.json()).resolves.toMatchObject({
+            scope: "openid profile email offline_access",
+        });
+    });
+
     test("DCR rejects unsafe metadata URLs before saving", async () => {
         const registerClient = vi.fn();
 
