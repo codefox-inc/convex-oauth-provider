@@ -48,6 +48,11 @@ export const registerClient = mutation({
         logoUrl: v.optional(v.string()),
         tosUrl: v.optional(v.string()),
         policyUrl: v.optional(v.string()),
+        tokenEndpointAuthMethod: v.optional(v.union(
+            v.literal("client_secret_basic"),
+            v.literal("client_secret_post"),
+            v.literal("none"),
+        )),
         isInternal: v.optional(v.boolean()),
     },
     handler: async (ctx, args) => {
@@ -83,6 +88,7 @@ export const registerClient = mutation({
                 logoUrl: args.logoUrl,
                 tosUrl: args.tosUrl,
                 policyUrl: args.policyUrl,
+                tokenEndpointAuthMethod: args.tokenEndpointAuthMethod ?? "client_secret_basic",
                 isInternal: args.isInternal,
             });
 
@@ -107,6 +113,7 @@ export const registerClient = mutation({
             logoUrl: args.logoUrl,
             tosUrl: args.tosUrl,
             policyUrl: args.policyUrl,
+            tokenEndpointAuthMethod: args.tokenEndpointAuthMethod ?? "none",
             isInternal: args.isInternal,
         });
 

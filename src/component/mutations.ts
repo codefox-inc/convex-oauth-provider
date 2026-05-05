@@ -25,6 +25,47 @@ export function isLoopbackRedirectUri(uri: string): boolean {
   }
 }
 
+const PKCE_PARAMETER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/;
+
+function isValidPkceParameter(value: string): boolean {
+  return PKCE_PARAMETER_PATTERN.test(value);
+}
+
+async function verifyPkce(
+    codeChallengeMethod: string,
+    codeChallenge: string,
+    codeVerifier: string
+) {
+    if (codeChallengeMethod !== "S256" && codeChallengeMethod !== "plain") {
+        throw new Error("unsupported_code_challenge_method");
+    }
+
+    if (!isValidPkceParameter(codeVerifier)) {
+        throw new Error("invalid_code_verifier");
+    }
+
+    if (codeChallengeMethod === "S256") {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(codeVerifier);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashBase64 = btoa(String.fromCharCode(...hashArray))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
+
+        if (hashBase64 !== codeChallenge) {
+            throw new Error("invalid_code_verifier");
+        }
+    } else if (codeChallengeMethod === "plain") {
+        if (codeVerifier !== codeChallenge) {
+            throw new Error("invalid_code_verifier");
+        }
+    } else {
+        throw new Error("unsupported_code_challenge_method");
+    }
+}
+
 /**
  * Match redirect URI with registered URIs
  * RFC 6749 Section 3.1.2.3: Exact string matching required
@@ -40,12 +81,15 @@ export function matchRedirectUri(requested: string, registered: string[]): boole
   if (isLoopbackRedirectUri(requested)) {
     try {
       const reqUrl = new URL(requested);
+      if (reqUrl.protocol !== "http:") {
+        return false;
+      }
       for (const regUri of registered) {
         if (isLoopbackRedirectUri(regUri)) {
           const regUrl = new URL(regUri);
           // loopback 例外は port の差分だけを許容する
           if (
-            reqUrl.protocol === regUrl.protocol &&
+            regUrl.protocol === "http:" &&
             reqUrl.hostname === regUrl.hostname &&
             reqUrl.pathname === regUrl.pathname &&
             reqUrl.search === regUrl.search
@@ -80,11 +124,15 @@ export const issueAuthorizationCode = mutation({
         codeChallenge: v.string(),
         codeChallengeMethod: v.string(),
         nonce: v.optional(v.string()),
+        resource: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         // 1. PKCE検証（RFC 7636）
         if (!args.codeChallenge || args.codeChallenge.trim() === "") {
             throw new Error("code_challenge required");
+        }
+        if (!isValidPkceParameter(args.codeChallenge)) {
+            throw new Error("invalid_code_challenge");
         }
         if (args.codeChallengeMethod !== "S256") {
             throw new Error("plain code_challenge_method is not supported, use S256");
@@ -126,6 +174,7 @@ export const issueAuthorizationCode = mutation({
             codeChallenge: args.codeChallenge,
             codeChallengeMethod: args.codeChallengeMethod,
             nonce: args.nonce,
+            resource: args.resource,
             expiresAt: Date.now() + OAUTH_CONSTANTS.CODE_EXPIRY_MS,
         });
 
@@ -146,6 +195,7 @@ export const consumeAuthCode = mutation({
         clientId: v.string(),
         redirectUri: v.optional(v.string()), // OAuth 2.1: optional
         codeVerifier: v.string(),
+        resource: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         // 1. Find Code (by hash)
@@ -167,8 +217,37 @@ export const consumeAuthCode = mutation({
             throw new Error("invalid_grant");
         }
 
+        const validateCodeRequest = async () => {
+            if (authCode.clientId !== args.clientId) {
+                throw new Error("invalid_grant");
+            }
+
+            // redirect_uri validation: 発行時に設定されている場合は必須
+            // RFC 6749 Section 4.1.3: redirect_uri REQUIRED if included in authorization request
+            if (authCode.redirectUri) {
+                if (!args.redirectUri) {
+                    throw new Error("redirect_uri_required");
+                }
+                if (authCode.redirectUri !== args.redirectUri) {
+                    throw new Error("redirect_uri_mismatch");
+                }
+            }
+
+            if (authCode.resource && args.resource && authCode.resource !== args.resource) {
+                throw new Error("invalid_target");
+            }
+
+            await verifyPkce(
+                authCode.codeChallengeMethod,
+                authCode.codeChallenge,
+                args.codeVerifier
+            );
+        };
+
         // RFC Line 1136: Detect authorization code reuse (replay attack)
         if (authCode.usedAt !== undefined) {
+            await validateCodeRequest();
+
             // Code was already used - this is a replay attack
             // Revoke all tokens issued with this code
             const tokensToRevoke = await ctx.db
@@ -190,47 +269,12 @@ export const consumeAuthCode = mutation({
         }
 
         // 2. Validation
-        if (authCode.clientId !== args.clientId) {
-            throw new Error("invalid_client");
-        }
-
         if (authCode.expiresAt < Date.now()) {
             await ctx.db.delete(authCode._id);
             throw new Error("invalid_grant");
         }
 
-        // redirect_uri validation: 発行時に設定されている場合は必須
-        // RFC 6749 Section 4.1.3: redirect_uri REQUIRED if included in authorization request
-        if (authCode.redirectUri) {
-            if (!args.redirectUri) {
-                throw new Error("redirect_uri_required");
-            }
-            if (authCode.redirectUri !== args.redirectUri) {
-                throw new Error("redirect_uri_mismatch");
-            }
-        }
-
-        // PKCE検証（エラーメッセージ改善）
-        if (authCode.codeChallengeMethod === "S256") {
-            const encoder = new TextEncoder();
-            const data = encoder.encode(args.codeVerifier);
-            const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashBase64 = btoa(String.fromCharCode(...hashArray))
-                .replace(/\+/g, "-")
-                .replace(/\//g, "_")
-                .replace(/=+$/, "");
-
-            if (hashBase64 !== authCode.codeChallenge) {
-                throw new Error("invalid_code_verifier");
-            }
-        } else if (authCode.codeChallengeMethod === "plain") {
-            if (args.codeVerifier !== authCode.codeChallenge) {
-                throw new Error("invalid_code_verifier");
-            }
-        } else {
-            throw new Error("unsupported_code_challenge_method");
-        }
+        await validateCodeRequest();
 
         // 3. Mark Code as Used (RFC Line 1136: detect replay)
         await ctx.db.patch(authCode._id, { usedAt: Date.now() });
@@ -242,6 +286,7 @@ export const consumeAuthCode = mutation({
             codeChallengeMethod: authCode.codeChallengeMethod,
             redirectUri: authCode.redirectUri,
             nonce: authCode.nonce,
+            resource: authCode.resource,
             codeHash, // Return code hash to link tokens
         };
     },
@@ -263,6 +308,7 @@ export const saveTokens = mutation({
         expiresAt: v.number(),
         refreshTokenExpiresAt: v.optional(v.number()),
         authorizationCode: v.optional(v.string()), // Hashed code for replay detection (RFC Line 1136)
+        resource: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         const authorizationCode = args.authorizationCode;
@@ -306,6 +352,7 @@ export const rotateRefreshToken = mutation({
         scopes: v.array(v.string()),
         expiresAt: v.number(),
         refreshTokenExpiresAt: v.optional(v.number()),
+        resource: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         // Hash the old refresh token for lookup
@@ -376,6 +423,7 @@ export const rotateRefreshToken = mutation({
             scopes: args.scopes,
             expiresAt: args.expiresAt,
             refreshTokenExpiresAt: args.refreshTokenExpiresAt,
+            resource: args.resource,
         });
     },
 });

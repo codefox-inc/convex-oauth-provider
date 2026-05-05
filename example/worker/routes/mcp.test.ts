@@ -28,6 +28,10 @@ describe('mcpRoutes', () => {
     })
 
     expect(response.status).toBe(401)
+    expect(response.headers.get('WWW-Authenticate')).toContain('error="invalid_token"')
+    expect(response.headers.get('WWW-Authenticate')).toContain(
+      'resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp"'
+    )
     expect(await response.json()).toEqual({ error: 'Invalid token audience' })
   })
 
@@ -37,6 +41,10 @@ describe('mcpRoutes', () => {
     })
 
     expect(response.status).toBe(401)
+    expect(response.headers.get('WWW-Authenticate')).toContain('error="invalid_token"')
+    expect(response.headers.get('WWW-Authenticate')).toContain(
+      'resource_metadata="https://example.com/.well-known/oauth-protected-resource/mcp"'
+    )
     expect(await response.json()).toEqual({ error: 'Invalid token audience' })
   })
 })

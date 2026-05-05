@@ -9,6 +9,7 @@ type Bindings = {
   CONVEX_SITE_URL?: string
   SITE_URL?: string
   OAUTH_PREFIX?: string
+  MCP_RESOURCE?: string
 }
 
 const oauthDiscoveryRoutes = new Hono<{ Bindings: Bindings }>()
@@ -32,6 +33,17 @@ function getAppUrl(env: Bindings, requestUrl: string): string {
 
 function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, '')}${path}`
+}
+
+function getAllowedResourcePath(env: Bindings): string {
+  if (env.MCP_RESOURCE) {
+    try {
+      return new URL(env.MCP_RESOURCE).pathname || '/mcp'
+    } catch {
+      return env.MCP_RESOURCE.startsWith('/') ? env.MCP_RESOURCE : '/mcp'
+    }
+  }
+  return '/mcp'
 }
 
 // Helper: Generate OAuth discovery response
@@ -133,6 +145,9 @@ oauthDiscoveryRoutes.get('/.well-known/oauth-protected-resource/*', (c) => {
     '/.well-known/oauth-protected-resource',
     ''
   )
+  if (resourcePath !== getAllowedResourcePath(c.env)) {
+    return c.notFound()
+  }
 
   if (!convexSiteUrl) {
     return c.json(

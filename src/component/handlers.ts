@@ -31,6 +31,8 @@ interface OAuthRegistrationBody {
     [key: string]: unknown;
 }
 
+type TokenEndpointAuthMethod = "client_secret_basic" | "client_secret_post" | "none";
+
 function buildAuthorizeErrorRedirect(
     redirectUri: string,
     error: string,
@@ -73,6 +75,45 @@ function isValidRedirectUri(uri: string): boolean {
 
 function formValueToString(value: FormDataEntryValue | null): string | null {
     return typeof value === "string" ? value : null;
+}
+
+function isValidResourceUri(value: string): boolean {
+    try {
+        const url = new URL(value);
+        return url.protocol.length > 1 && url.hash === "";
+    } catch {
+        return false;
+    }
+}
+
+function getSingleFormString(formData: FormData, name: string): string | null {
+    const values = formData.getAll(name);
+    if (values.length === 0) return null;
+    if (values.length > 1) {
+        throw new OAuthError("invalid_request", `Duplicate parameter: ${name}`);
+    }
+    return formValueToString(values[0]);
+}
+
+function getRegisteredTokenAuthMethod(client: {
+    type: "confidential" | "public";
+    tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
+}): TokenEndpointAuthMethod | undefined {
+    return client.tokenEndpointAuthMethod ?? (client.type === "public" ? "none" : undefined);
+}
+
+function validateRequestedResource(resource: string | null): string | undefined {
+    if (!resource) return undefined;
+    if (!isValidResourceUri(resource)) {
+        throw new OAuthError("invalid_target", "resource must be an absolute URI without fragment");
+    }
+    return resource;
+}
+
+const PKCE_PARAMETER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/;
+
+function isValidPkceParameter(value: string): boolean {
+    return PKCE_PARAMETER_PATTERN.test(value);
 }
 
 function decodeFormComponent(value: string): string {
@@ -155,6 +196,7 @@ export interface OAuthComponentAPI {
             type: "confidential" | "public";
             redirectUris: string[];
             allowedScopes: string[];
+            tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
         } | null>;
         getRefreshToken: (ctx: RunQueryCtx, args: { refreshToken: string }) => Promise<{
             refreshToken?: string;
@@ -162,6 +204,7 @@ export interface OAuthComponentAPI {
             userId: string;
             scopes: string[];
             refreshTokenExpiresAt?: number;
+            resource?: string;
         } | null>;
         getTokensByUser: (ctx: RunQueryCtx, args: { userId: string }) => Promise<Array<{
             _id: string;
@@ -181,12 +224,14 @@ export interface OAuthComponentAPI {
             codeChallenge: string;
             codeChallengeMethod: string;
             nonce?: string;
+            resource?: string;
         }) => Promise<string>;
         consumeAuthCode: (ctx: RunMutationCtx, args: {
             code: string;
             clientId: string;
             redirectUri?: string;
             codeVerifier: string;
+            resource?: string;
         }) => Promise<{
             userId: string;
             scopes: string[];
@@ -195,6 +240,7 @@ export interface OAuthComponentAPI {
             redirectUri: string;
             nonce?: string;
             codeHash: string;
+            resource?: string;
         }>;
         saveTokens: (ctx: RunMutationCtx, args: {
             accessToken: string;
@@ -205,6 +251,7 @@ export interface OAuthComponentAPI {
             expiresAt: number;
             refreshTokenExpiresAt?: number;
             authorizationCode?: string;
+            resource?: string;
         }) => Promise<void>;
         rotateRefreshToken: (ctx: RunMutationCtx, args: {
             oldRefreshToken: string;
@@ -215,6 +262,7 @@ export interface OAuthComponentAPI {
             scopes: string[];
             expiresAt: number;
             refreshTokenExpiresAt: number;
+            resource?: string;
         }) => Promise<void>;
         upsertAuthorization: (ctx: RunMutationCtx, args: {
             userId: string;
@@ -236,6 +284,7 @@ export interface OAuthComponentAPI {
             logoUrl?: string;
             tosUrl?: string;
             policyUrl?: string;
+            tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
         }) => Promise<{
             clientId: string;
             clientSecret?: string;
@@ -278,9 +327,12 @@ export async function authorizeHandler(
     const scope = params.get("scope") ?? "";
     const state = params.get("state");
     const consent = params.get("consent");
+    const prompt = params.get("prompt");
     const codeChallenge = params.get("code_challenge");
     const codeChallengeMethod = params.get("code_challenge_method");
     const nonce = params.get("nonce") ?? undefined;
+    const resource = params.get("resource");
+    const maxAge = params.get("max_age");
 
     if (!clientId) {
         return new OAuthError("invalid_request", "client_id required").toResponse(headers);
@@ -295,6 +347,32 @@ export async function authorizeHandler(
     }
     if (!matchRedirectUri(redirectUri, client.redirectUris)) {
         return new OAuthError("invalid_request", "redirect_uri mismatch").toResponse(headers);
+    }
+
+    const singletonParameters = [
+        "response_type",
+        "client_id",
+        "redirect_uri",
+        "scope",
+        "state",
+        "consent",
+        "prompt",
+        "code_challenge",
+        "code_challenge_method",
+        "nonce",
+        "resource",
+        "max_age",
+    ];
+    const duplicateParameter = singletonParameters.find(
+        (name) => params.getAll(name).length > 1
+    );
+    if (duplicateParameter) {
+        return buildAuthorizeErrorRedirect(
+            redirectUri,
+            "invalid_request",
+            `Duplicate parameter: ${duplicateParameter}`,
+            state
+        );
     }
 
     if (consent === "approve" && !isConsentFromProvider(request, config)) {
@@ -315,9 +393,30 @@ export async function authorizeHandler(
         );
     }
 
-    const requestedScopes = scope
+    if (maxAge !== null) {
+        return buildAuthorizeErrorRedirect(
+            redirectUri,
+            "invalid_request",
+            "max_age is not supported",
+            state
+        );
+    }
+
+    if (resource && !isValidResourceUri(resource)) {
+        return buildAuthorizeErrorRedirect(
+            redirectUri,
+            "invalid_target",
+            "resource must be an absolute URI without fragment",
+            state
+        );
+    }
+
+    let requestedScopes = scope
         ? scope.split(" ").filter(Boolean)
         : [];
+    if (requestedScopes.includes("offline_access") && prompt !== "consent") {
+        requestedScopes = requestedScopes.filter((s) => s !== "offline_access");
+    }
     if (requestedScopes.length === 0) {
         return buildAuthorizeErrorRedirect(
             redirectUri,
@@ -341,6 +440,14 @@ export async function authorizeHandler(
             redirectUri,
             "invalid_request",
             "code_challenge required",
+            state
+        );
+    }
+    if (!isValidPkceParameter(codeChallenge)) {
+        return buildAuthorizeErrorRedirect(
+            redirectUri,
+            "invalid_request",
+            "invalid code_challenge",
             state
         );
     }
@@ -383,6 +490,7 @@ export async function authorizeHandler(
         codeChallenge,
         codeChallengeMethod,
         nonce,
+        resource: resource ?? undefined,
     });
 
     const redirect = new URL(redirectUri);
@@ -490,6 +598,7 @@ export async function tokenHandler(
             "client_secret",
             "refresh_token",
             "scope",
+            "resource",
         ];
         const duplicateParameter = singleValueParameters.find(
             (name) => formData.getAll(name).length > 1
@@ -504,10 +613,12 @@ export async function tokenHandler(
         const bodyClientId = formValueToString(formData.get("client_id"));
         const codeVerifier = formValueToString(formData.get("code_verifier"));
         const bodyClientSecret = formValueToString(formData.get("client_secret"));
+        const requestedResource = validateRequestedResource(getSingleFormString(formData, "resource"));
         const authHeader = request.headers.get("Authorization");
 
         let clientId = bodyClientId;
         let clientSecret = bodyClientSecret;
+        let usedAuthMethod: TokenEndpointAuthMethod = bodyClientSecret ? "client_secret_post" : "none";
         if (authHeader) {
             if (bodyClientSecret) {
                 throw new OAuthError("invalid_request", "Multiple client authentication methods");
@@ -515,6 +626,7 @@ export async function tokenHandler(
             const basicCredentials = parseBasicClientCredentials(authHeader);
             clientId = basicCredentials.clientId;
             clientSecret = basicCredentials.clientSecret;
+            usedAuthMethod = "client_secret_basic";
         }
 
         if (!clientId) throw new OAuthError("invalid_request", "client_id required");
@@ -523,6 +635,11 @@ export async function tokenHandler(
         const client = await api.queries.getClient(ctx, { clientId });
         if (!client) {
             throw new OAuthError("invalid_client", "Unknown client", 401);
+        }
+
+        const registeredAuthMethod = getRegisteredTokenAuthMethod(client);
+        if (registeredAuthMethod && usedAuthMethod !== "none" && usedAuthMethod !== registeredAuthMethod) {
+            throw new OAuthError("invalid_client", "Client authentication method not allowed", 401);
         }
 
         if (client.type === "confidential") {
@@ -534,7 +651,7 @@ export async function tokenHandler(
             });
 
             if (!isValid) throw new OAuthError("invalid_client", "Invalid client secret", 401);
-        } else if (clientSecret) {
+        } else if (clientSecret || usedAuthMethod !== "none") {
             throw new OAuthError("invalid_client", "Public clients must not authenticate", 401);
         }
 
@@ -549,6 +666,7 @@ export async function tokenHandler(
                 clientId,
                 redirectUri: redirectUri ?? undefined,
                 codeVerifier: codeVerifier as string,
+                resource: requestedResource,
             });
 
             // Check for authorization code reuse (RFC Line 1136)
@@ -562,6 +680,7 @@ export async function tokenHandler(
             const accessTokenExpiresIn = 3600;
             const issuerUrl = getIssuerUrl(config);
             const keyId = getSigningKeyId(config);
+            const accessTokenAudience = codeData.resource ?? requestedResource ?? config.applicationID ?? "convex";
 
             // Access Token
             const accessToken = await sign(
@@ -569,9 +688,12 @@ export async function tokenHandler(
                     uid: userId,
                     scp: codeData.scopes,
                     cid: clientId,
+                    scope: codeData.scopes.join(" "),
+                    client_id: clientId,
+                    jti: crypto.randomUUID(),
                 },
                 userId,
-                config.applicationID ?? "convex",
+                accessTokenAudience,
                 "1h",
                 config.privateKey,
                 issuerUrl,
@@ -613,6 +735,7 @@ export async function tokenHandler(
                 expiresAt: (now + accessTokenExpiresIn) * 1000,
                 refreshTokenExpiresAt: refreshToken ? (now + 3600 * 24 * 30) * 1000 : undefined,
                 authorizationCode: codeData.codeHash, // Link to authorization code
+                resource: codeData.resource ?? requestedResource,
             });
 
             // F. Create/Update Authorization Record
@@ -654,6 +777,11 @@ export async function tokenHandler(
             const oldToken = await api.queries.getRefreshToken(ctx, { refreshToken });
 
             if (!oldToken) throw new OAuthError("invalid_grant", "Invalid refresh token");
+            const refreshTokenResource = oldToken.resource;
+            const accessTokenAudience = requestedResource ?? refreshTokenResource ?? config.applicationID ?? "convex";
+            if (refreshTokenResource && requestedResource && requestedResource !== refreshTokenResource) {
+                throw new OAuthError("invalid_target", "Requested resource does not match refresh token grant");
+            }
 
             if (!oldToken.refreshTokenExpiresAt || oldToken.refreshTokenExpiresAt < Date.now()) {
                 throw new OAuthError("invalid_grant", "Refresh token expired");
@@ -707,9 +835,12 @@ export async function tokenHandler(
                     uid: userId,
                     scp: accessTokenScopes, // 縮小可能
                     cid: clientId,
+                    scope: accessTokenScopes.join(" "),
+                    client_id: clientId,
+                    jti: crypto.randomUUID(),
                 },
                 userId,
-                config.applicationID ?? "convex",
+                accessTokenAudience,
                 "1h",
                 config.privateKey,
                 issuerUrl,
@@ -745,6 +876,7 @@ export async function tokenHandler(
                     scopes: refreshTokenScopes, // 元のスコープと同一
                     expiresAt: (now + accessTokenExpiresIn) * 1000,
                     refreshTokenExpiresAt: (now + 3600 * 24 * 30) * 1000,
+                    resource: refreshTokenResource,
                 });
 
                 // Update authorization lastUsedAt
@@ -804,6 +936,7 @@ export async function tokenHandler(
                 "unsupported_code_challenge_method": ["invalid_request", "Unsupported code challenge method", undefined],
                 "scope_change_not_allowed": ["invalid_scope", "Refresh token scope must remain identical", undefined],
                 "authorization_code_reuse_detected": ["invalid_grant", "Authorization code has already been used", undefined],
+                "invalid_target": ["invalid_target", "Requested resource does not match authorization grant", undefined],
             };
 
             for (const [pattern, [code, message, status]] of Object.entries(errorMap)) {
@@ -840,7 +973,7 @@ export async function userInfoHandler(
             status: 401,
             headers: {
                 ...headers,
-                "WWW-Authenticate": 'Bearer error="invalid_token", error_description="Missing bearer token"',
+                "WWW-Authenticate": 'Bearer realm="userinfo", error="invalid_token", error_description="Missing bearer token"',
             },
         });
     }
@@ -885,7 +1018,13 @@ export async function userInfoHandler(
         const user = await getUserProfile(userId);
 
         if (!user) {
-            return new Response(null, { status: 401, headers });
+            return new Response(null, {
+                status: 401,
+                headers: {
+                    ...headers,
+                    "WWW-Authenticate": 'Bearer error="invalid_token", error_description="User profile not found"',
+                },
+            });
         }
 
         const responseBody: UserProfile = { sub: userId };
@@ -962,7 +1101,8 @@ export async function registerHandler(
                 "Unsupported token_endpoint_auth_method"
             );
         }
-        const type = (authMethod === "none") ? "public" : "confidential";
+        const tokenEndpointAuthMethod = (authMethod || "client_secret_basic") as TokenEndpointAuthMethod;
+        const type = (tokenEndpointAuthMethod === "none") ? "public" : "confidential";
 
         if (redirectUris.length === 0) {
             throw new OAuthError("invalid_request", "redirect_uris required");
@@ -995,6 +1135,7 @@ export async function registerHandler(
             website: body.client_uri,
             tosUrl: body.tos_uri,
             policyUrl: body.policy_uri,
+            tokenEndpointAuthMethod,
         });
 
         const responseBody: Record<string, unknown> = {
@@ -1004,10 +1145,14 @@ export async function registerHandler(
             grant_types: ["authorization_code", "refresh_token"],
             response_types: ["code"],
             scope: scopes.join(" "),
-            token_endpoint_auth_method: authMethod || "client_secret_basic",
+            token_endpoint_auth_method: tokenEndpointAuthMethod,
             application_type: "web",
             client_name: clientName,
         };
+        if (body.logo_uri) responseBody.logo_uri = body.logo_uri;
+        if (body.client_uri) responseBody.client_uri = body.client_uri;
+        if (body.tos_uri) responseBody.tos_uri = body.tos_uri;
+        if (body.policy_uri) responseBody.policy_uri = body.policy_uri;
 
         if (result.clientSecret) {
             responseBody.client_secret = result.clientSecret;

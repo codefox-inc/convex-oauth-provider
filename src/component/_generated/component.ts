@@ -42,6 +42,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           policyUrl?: string;
           redirectUris: Array<string>;
           scopes: Array<string>;
+          tokenEndpointAuthMethod?:
+            | "client_secret_basic"
+            | "client_secret_post"
+            | "none";
           tosUrl?: string;
           type: "confidential" | "public";
           website?: string;
@@ -66,6 +70,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           code: string;
           codeVerifier: string;
           redirectUri?: string;
+          resource?: string;
         },
         any,
         Name
@@ -86,6 +91,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           codeChallengeMethod: string;
           nonce?: string;
           redirectUri: string;
+          resource?: string;
           scopes: Array<string>;
           userId: string;
         },
@@ -109,6 +115,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           oldRefreshToken: string;
           refreshToken?: string;
           refreshTokenExpiresAt?: number;
+          resource?: string;
           scopes: Array<string>;
           userId: string;
         },
@@ -125,6 +132,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           expiresAt: number;
           refreshToken?: string;
           refreshTokenExpiresAt?: number;
+          resource?: string;
           scopes: Array<string>;
           userId: string;
         },

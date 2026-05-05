@@ -228,6 +228,7 @@ export class OAuthProvider {
         logoUrl?: string;
         tosUrl?: string;
         policyUrl?: string;
+        tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post" | "none";
     }) {
         return this.api.clientManagement.registerClient(ctx, args);
     }

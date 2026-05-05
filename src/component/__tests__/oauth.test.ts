@@ -9,6 +9,9 @@ import type { OAuthComponentAPI } from "../handlers";
 import type { OAuthConfig } from "../../lib/oauth";
 
 const modules = import.meta.glob("../**/*.ts");
+const validCodeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+const validCodeVerifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const wrongCodeVerifier = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 describe("OAuth 2.1 Flow", () => {
     let t: ReturnType<typeof convexTest>;
@@ -788,7 +791,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
         });
 
@@ -844,7 +847,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20admin&state=abc&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20admin&state=abc&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -903,7 +906,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20profile&state=state-123&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20profile&state=state-123&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -962,7 +965,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -1181,7 +1184,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=challenge&code_challenge_method=plain", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=plain", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -1240,7 +1243,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&state=abc&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://client.example.com/start",
@@ -2061,7 +2064,7 @@ describe("OAuth 2.1 Flow", () => {
             },
         };
 
-        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&consent=approve&code_challenge=challenge&code_challenge_method=S256", {
+        const request = new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&consent=approve&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
             method: "GET",
             headers: {
                 "Referer": "https://example.com/consent",
@@ -2093,7 +2096,7 @@ describe("OAuth 2.1 Flow", () => {
             userId,
             redirectUri: "https://cb",
             scopes: [],
-            codeChallenge: "c",
+            codeChallenge: validCodeChallenge,
             codeChallengeMethod: "S256"  // Changed from "plain" to "S256"
         });
 
@@ -2581,14 +2584,17 @@ describe("OAuth 2.1 Flow", () => {
         };
         const payload: Record<string, unknown> = {
             scp: scopes.join(" "),
+            scope: scopes.join(" "),
+            jti: crypto.randomUUID(),
         };
         if (options.clientId) {
             payload.cid = options.clientId;
+            payload.client_id = options.clientId;
         }
         const token = await new SignJWT({
             ...payload,
         })
-            .setProtectedHeader({ alg: "RS256", kid: "default-key" })
+            .setProtectedHeader({ alg: "RS256", typ: "at+jwt", kid: "default-key" })
             .setIssuedAt()
             .setSubject("user-1")
             .setAudience("convex")
@@ -2950,7 +2956,7 @@ codeHash: "test-code-hash",
             userId,
             redirectUri: "https://cb",
             scopes: ["openid"],
-            codeChallenge: "challenge",
+            codeChallenge: validCodeChallenge,
             codeChallengeMethod: "S256"
         });
 
@@ -2959,7 +2965,7 @@ codeHash: "test-code-hash",
                 code,
                 clientId: client.clientId,
                 redirectUri: "https://wrong-redirect",
-                codeVerifier: "verifier",
+                codeVerifier: validCodeVerifier,
             })
         ).rejects.toThrow("redirect_uri_mismatch");
     });
@@ -2978,7 +2984,7 @@ codeHash: "test-code-hash",
             userId,
             redirectUri: "https://cb",
             scopes: ["openid"],
-            codeChallenge: "correct-challenge",
+            codeChallenge: validCodeChallenge,
             codeChallengeMethod: "S256"
         });
 
@@ -2987,7 +2993,7 @@ codeHash: "test-code-hash",
                 code,
                 clientId: client.clientId,
                 redirectUri: "https://cb",
-                codeVerifier: "wrong-verifier",
+                codeVerifier: wrongCodeVerifier,
             })
         ).rejects.toThrow("invalid_code_verifier");
     });
@@ -3044,7 +3050,7 @@ codeHash: "test-code-hash",
                 userId,
                 redirectUri: "https://cb",
                 scopes: ["openid"],
-                codeChallenge: "challenge",
+                codeChallenge: validCodeChallenge,
                 codeChallengeMethod: "S256",
                 expiresAt: Date.now() - 1000, // Expired
             });
@@ -3078,7 +3084,7 @@ codeHash: "test-code-hash",
                 userId,
                 redirectUri: "https://cb",
                 scopes: ["openid"],
-                codeChallenge: "challenge",
+                codeChallenge: validCodeChallenge,
                 codeChallengeMethod: "MD5", // Invalid method
                 expiresAt: Date.now() + 600000,
             });
@@ -3089,7 +3095,7 @@ codeHash: "test-code-hash",
                 code,
                 clientId: client.clientId,
                 redirectUri: "https://cb",
-                codeVerifier: "verifier",
+                codeVerifier: validCodeVerifier,
             })
         ).rejects.toThrow("unsupported_code_challenge_method");
     });
@@ -3268,7 +3274,7 @@ codeHash: "test-code-hash",
             userId,
             redirectUri: "https://cb",
             scopes: ["openid"],
-            codeChallenge: "challenge",
+            codeChallenge: validCodeChallenge,
             codeChallengeMethod: "S256"
         });
 

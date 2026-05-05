@@ -13,6 +13,8 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
+const validCodeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
 describe("OAuth 2.1 RFC Compliance", () => {
   describe("Section 4.1.1 - PKCE Requirements", () => {
     test("MUST support code_challenge and code_verifier parameters", async () => {
@@ -104,7 +106,7 @@ describe("OAuth 2.1 RFC Compliance", () => {
           clientId: client.clientId,
           scopes: ["openid"],
           redirectUri: "https://example.com/callback",
-          codeChallenge: "test-verifier",
+          codeChallenge: validCodeChallenge,
           codeChallengeMethod: "plain",
         })
       ).rejects.toThrow(/plain.*not.*support/i);

@@ -28,6 +28,10 @@ function getProtectedResourceMetadataUrl(c: Context<{ Bindings: Bindings }>): st
   return `${new URL(c.req.url).origin}/.well-known/oauth-protected-resource/mcp`
 }
 
+function invalidTokenChallenge(c: Context<{ Bindings: Bindings }>): string {
+  return `Bearer realm="mcp", error="invalid_token", resource_metadata="${getProtectedResourceMetadataUrl(c)}"`
+}
+
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const [, payload] = token.split('.')
   if (!payload) {
@@ -91,6 +95,7 @@ mcpRoutes.all('/', async (c) => {
   // This example keeps signature verification delegated to Convex. The audience
   // check is a resource-server guard before forwarding the bearer token.
   if (!hasExpectedAudience(token, getCanonicalMcpResource(c))) {
+    c.header('WWW-Authenticate', invalidTokenChallenge(c))
     return c.json({ error: 'Invalid token audience' }, 401)
   }
 

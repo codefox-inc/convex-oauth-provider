@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { SignJWT, decodeProtectedHeader, importPKCS8 } from "jose";
 import {
     sign,
     verifyAccessToken,
@@ -120,6 +121,52 @@ describe("OAuth JWT and Utilities", () => {
             expect(payload.sub).toBe("user123");
             expect(payload.aud).toBe("test-audience");
             expect(payload.iss).toBe("https://example.com");
+        });
+
+        it("should sign access tokens with RFC9068 protected header typ", async () => {
+            const token = await sign(
+                { scope: "openid profile", client_id: "client", jti: "token-id" },
+                "user123",
+                "test-audience",
+                "1h",
+                TEST_PRIVATE_KEY,
+                "https://example.com",
+                "test-key-1"
+            );
+
+            expect(decodeProtectedHeader(token).typ).toBe("at+jwt");
+            const payload = await verifyAccessToken(
+                token,
+                { jwks: TEST_JWKS },
+                "https://example.com",
+                "test-audience"
+            );
+            expect(payload).toMatchObject({
+                scope: "openid profile",
+                client_id: "client",
+                jti: "token-id",
+            });
+        });
+
+        it("should reject access tokens without the RFC9068 protected header typ", async () => {
+            const privateKey = await importPKCS8(TEST_PRIVATE_KEY, "RS256");
+            const token = await new SignJWT({})
+                .setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "test-key-1" })
+                .setIssuedAt()
+                .setIssuer("https://example.com")
+                .setSubject("user123")
+                .setAudience("test-audience")
+                .setExpirationTime("1h")
+                .sign(privateKey);
+
+            await expect(
+                verifyAccessToken(
+                    token,
+                    { jwks: TEST_JWKS },
+                    "https://example.com",
+                    "test-audience"
+                )
+            ).rejects.toThrow(/typ/);
         });
 
         it("should verify with JWKS missing kid", async () => {

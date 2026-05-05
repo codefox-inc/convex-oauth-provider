@@ -177,7 +177,7 @@ export async function sign(
     const privateKey = await getPrivateKey(privateKeyPEM);
 
     const jwt = new SignJWT(payload)
-        .setProtectedHeader({ alg: "RS256", kid: keyId })
+        .setProtectedHeader({ alg: "RS256", typ: "at+jwt", kid: keyId })
         .setIssuedAt()
         .setSubject(subject)
         .setAudience(audience)
@@ -206,9 +206,13 @@ export async function verifyAccessToken(
         issuer: issuerUrl,
         audience,
     };
-    const { payload } = typeof publicKey === "function"
+    const { payload, protectedHeader } = typeof publicKey === "function"
         ? await jwtVerify(token, publicKey, options)
         : await jwtVerify(token, publicKey, options);
+
+    if (protectedHeader.typ !== "at+jwt") {
+        throw new Error("Invalid access token typ");
+    }
 
     return payload;
 }
