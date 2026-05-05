@@ -190,6 +190,45 @@ describe("OAuth mutation protocol enforcement", () => {
     expect(codeData.resource).toBe("https://api.example.com/mcp");
   });
 
+  test.each([
+    ["relative resource", "/mcp"],
+    ["fragment resource", "https://api.example.com/mcp#fragment"],
+    ["invalid URL resource", "not a url"],
+  ])("issueAuthorizationCode rejects %s", async (_caseName, resource) => {
+    const t = convexTest(schema, modules);
+    const client = await t.mutation(api.clientManagement.registerClient, {
+      name: "Resource Client",
+      type: "public",
+      redirectUris: ["https://example.com/callback"],
+      scopes: ["openid"],
+    });
+
+    await expect(
+      t.mutation(api.mutations.issueAuthorizationCode, {
+        userId: "user123",
+        clientId: client.clientId,
+        scopes: ["openid"],
+        redirectUri: "https://example.com/callback",
+        codeChallenge: validCodeChallenge,
+        codeChallengeMethod: "S256",
+        resource,
+      })
+    ).rejects.toThrow("invalid_target");
+  });
+
+  test("upsertAuthorization rejects invalid resource metadata", async () => {
+    const t = convexTest(schema, modules);
+
+    await expect(
+      t.mutation(api.mutations.upsertAuthorization, {
+        userId: "user123",
+        clientId: "client123",
+        scopes: ["openid"],
+        resource: "https://api.example.com/mcp#fragment",
+      })
+    ).rejects.toThrow("invalid_target");
+  });
+
   test("consumeAuthCode allows redirect_uri omission and validates it only when supplied", async () => {
     const t = convexTest(schema, modules);
     const client = await t.mutation(api.clientManagement.registerClient, {

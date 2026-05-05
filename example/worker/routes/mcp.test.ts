@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => {
     handleRequest,
     close: vi.fn(),
     setAuth: vi.fn(),
+    setAdminAuth: vi.fn(),
+    createMcpServer: vi.fn(() => ({
+      connect: vi.fn(),
+    })),
   }
 })
 
@@ -29,23 +33,24 @@ vi.mock('convex/browser', () => ({
   ConvexClient: vi.fn(function ConvexClient() {
     return {
       setAuth: mocks.setAuth,
+      setAdminAuth: mocks.setAdminAuth,
     }
   }),
 }))
 
 vi.mock('../mcp/server', () => ({
-  createMcpServer: vi.fn(() => ({
-    connect: mocks.connect,
-  })),
+  createMcpServer: mocks.createMcpServer,
 }))
 
 async function createSignedAccessToken({
   audience,
   issuer = 'https://issuer.example.com/oauth',
+  subject = 'user123',
   typ = 'at+jwt',
 }: {
   audience: string | string[]
   issuer?: string
+  subject?: string
   typ?: string
 }): Promise<{ token: string; jwks: Jwks }> {
   const { publicKey, privateKey } = await generateKeyPair('RS256')
@@ -57,6 +62,7 @@ async function createSignedAccessToken({
   const token = await new SignJWT({})
     .setProtectedHeader({ alg: 'RS256', kid: 'test-key', typ })
     .setIssuer(issuer)
+    .setSubject(subject)
     .setAudience(audience)
     .setIssuedAt()
     .setExpirationTime('5m')
@@ -177,10 +183,12 @@ describe('mcpRoutes', () => {
     })
 
     expect(response.status).toBe(200)
-    expect(mocks.setAuth).toHaveBeenCalledTimes(1)
-    const authFactory = mocks.setAuth.mock.calls[0]?.[0] as () => Promise<string>
-    await expect(authFactory()).resolves.toBe('worker-internal-token')
-    await expect(authFactory()).resolves.not.toBe(token)
+    expect(mocks.setAuth).not.toHaveBeenCalled()
+    expect(mocks.setAdminAuth).toHaveBeenCalledWith('worker-internal-token')
+    expect(mocks.createMcpServer).toHaveBeenCalledWith(
+      expect.anything(),
+      'user123'
+    )
   })
 
   test('fails explicitly instead of passing the inbound token to Convex when worker credentials are missing', async () => {
@@ -205,5 +213,6 @@ describe('mcpRoutes', () => {
       },
     })
     expect(mocks.setAuth).not.toHaveBeenCalled()
+    expect(mocks.setAdminAuth).not.toHaveBeenCalled()
   })
 })

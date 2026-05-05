@@ -88,7 +88,7 @@ example/              # Full working example
 
 - Custom consent UIs must preserve the authorization request `resource` parameter and pass it to `OAuthProvider.issueAuthorizationCode`.
 - Resource servers should terminate bearer tokens: verify `iss`, `aud`, `typ`, expiration, and scopes locally, then call their backend with an internal credential instead of passing the inbound OAuth token through.
-- The example Worker uses `MCP_CONVEX_AUTH_TOKEN` as that internal Worker-to-Convex credential. This is example host plumbing, not an OAuth signing key.
+- The example Worker uses `MCP_CONVEX_AUTH_TOKEN` as a Convex admin/internal Worker-to-Convex credential, then passes the verified OAuth `sub` into internal task functions for user scoping. This is example host plumbing, not an OAuth signing key.
 
 ### Testing
 
@@ -106,7 +106,7 @@ Required for OAuth Provider:
 - `CONVEX_SITE_URL` - Convex deployment URL (issuer)
 
 Example Worker:
-- `MCP_CONVEX_AUTH_TOKEN` - Internal credential used after inbound MCP access token verification
+- `MCP_CONVEX_AUTH_TOKEN` - Convex admin/internal credential used after inbound MCP access token verification
 - `MCP_RESOURCE` - Optional canonical MCP protected resource URI; defaults to the Worker `/mcp` URL
 
 ## Example App

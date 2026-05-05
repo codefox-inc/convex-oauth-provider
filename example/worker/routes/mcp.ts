@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { ConvexClient } from 'convex/browser'
+import type { JWTPayload } from 'jose'
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose'
 import { createMcpServer } from '../mcp/server'
 
@@ -89,17 +90,21 @@ function invalidTokenChallenge(c: Context<{ Bindings: Bindings }>): string {
 async function verifyMcpAccessToken(
   c: Context<{ Bindings: Bindings }>,
   token: string
-): Promise<'valid' | 'invalid' | 'missing_oauth_configuration'> {
+): Promise<
+  | { status: 'valid'; payload: JWTPayload }
+  | { status: 'invalid' }
+  | { status: 'missing_oauth_configuration' }
+> {
   try {
     const header = decodeProtectedHeader(token)
     const typ = typeof header.typ === 'string' ? header.typ.toLowerCase() : ''
     if (!ACCESS_TOKEN_TYP_VALUES.has(typ)) {
-      return 'invalid'
+      return { status: 'invalid' }
     }
 
     const issuer = getAuthorizationServerIssuer(c.env)
     if (!issuer) {
-      return 'missing_oauth_configuration'
+      return { status: 'missing_oauth_configuration' }
     }
 
     const expectedAudience = getCanonicalMcpResource(c)
@@ -110,9 +115,11 @@ async function verifyMcpAccessToken(
       audience: expectedAudience,
       issuer,
     })
-    return payload.aud === expectedAudience ? 'valid' : 'invalid'
+    return payload.aud === expectedAudience && typeof payload.sub === 'string'
+      ? { status: 'valid', payload }
+      : { status: 'invalid' }
   } catch {
-    return 'invalid'
+    return { status: 'invalid' }
   }
 }
 
@@ -143,7 +150,7 @@ mcpRoutes.all('/', async (c) => {
   }
 
   const tokenVerification = await verifyMcpAccessToken(c, token)
-  if (tokenVerification === 'missing_oauth_configuration') {
+  if (tokenVerification.status === 'missing_oauth_configuration') {
     return c.json({
       jsonrpc: '2.0',
       error: {
@@ -153,7 +160,7 @@ mcpRoutes.all('/', async (c) => {
       id: null,
     }, 500)
   }
-  if (tokenVerification === 'invalid') {
+  if (tokenVerification.status === 'invalid') {
     c.header('WWW-Authenticate', invalidTokenChallenge(c))
     return c.json({ error: 'Invalid token audience' }, 401)
   }
@@ -181,10 +188,10 @@ mcpRoutes.all('/', async (c) => {
   }
 
   const convex = new ConvexClient(convexUrl)
-  convex.setAuth(() => Promise.resolve(convexAuthToken))
+  convex.setAdminAuth(convexAuthToken)
 
   // Create MCP Server with tools
-  const mcpServer = createMcpServer(convex)
+  const mcpServer = createMcpServer(convex, tokenVerification.payload.sub)
 
   // Create Web Standard Streamable HTTP Transport (Stateless mode)
   const transport = new WebStandardStreamableHTTPServerTransport({

@@ -69,12 +69,12 @@ Edit `.dev.vars`:
 CONVEX_URL=https://your-deployment.convex.cloud
 CONVEX_SITE_URL=https://your-deployment.convex.site
 SITE_URL=http://localhost:8787
-MCP_CONVEX_AUTH_TOKEN=<internal-token-for-convex-calls>
+MCP_CONVEX_AUTH_TOKEN=<convex-admin-token-for-internal-calls>
 # Optional, defaults to ${SITE_URL}/mcp
 # MCP_RESOURCE=http://localhost:8787/mcp
 ```
 
-`MCP_CONVEX_AUTH_TOKEN` is an internal credential used by the Worker when it calls Convex after the inbound MCP access token has been verified. The Worker must not pass the MCP client's bearer token through to Convex.
+`MCP_CONVEX_AUTH_TOKEN` is an internal Convex credential used by the Worker when it calls Convex after the inbound MCP access token has been verified. The example uses it with `setAdminAuth` so the Worker can call internal functions while passing the verified OAuth `sub` as the task owner. The Worker must not pass the MCP client's bearer token through to Convex.
 
 ### 3. Initialize Convex
 
@@ -206,7 +206,7 @@ The MCP client uses Dynamic Client Registration (DCR), so you do not need to man
 - The Worker validates access tokens with the authorization server JWKS, issuer, `typ`, and the canonical MCP resource audience.
 - `MCP_RESOURCE` can be a full URL or a path. The protected resource metadata URL is derived from the same canonical resource.
 - Protected Resource Metadata does not advertise `offline_access`; that scope is handled by the authorization server and consent flow.
-- Convex calls use `MCP_CONVEX_AUTH_TOKEN` instead of the inbound MCP bearer token to avoid token pass-through.
+- Convex calls use `MCP_CONVEX_AUTH_TOKEN` instead of the inbound MCP bearer token to avoid token pass-through. Task tools pass the verified OAuth `sub` into internal Convex functions so every request stays scoped to the MCP user.
 
 ## Troubleshooting
 
@@ -218,7 +218,7 @@ If you set `MCP_RESOURCE`, make sure the authorization request, token request, p
 
 ### "Missing MCP_CONVEX_AUTH_TOKEN configuration" error
 
-Set `MCP_CONVEX_AUTH_TOKEN` in `example/.dev.vars` or the Worker deployment environment. It should be a Worker-to-Convex internal credential, not an OAuth access token and not your OAuth signing private key.
+Set `MCP_CONVEX_AUTH_TOKEN` in `example/.dev.vars` or the Worker deployment environment. It should be a Worker-to-Convex admin/internal credential that can call the example internal task functions, not an OAuth access token and not your OAuth signing private key.
 
 ### OAuth consent shows black screen
 

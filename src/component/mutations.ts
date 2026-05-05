@@ -34,6 +34,21 @@ function isValidPkceParameter(value: string): boolean {
   return PKCE_PARAMETER_PATTERN.test(value);
 }
 
+export function isValidResourceUri(resource: string): boolean {
+    try {
+        const parsed = new URL(resource);
+        return parsed.protocol.length > 0 && parsed.hash === "";
+    } catch {
+        return false;
+    }
+}
+
+function validateResourceUri(resource: string | undefined): void {
+    if (resource !== undefined && !isValidResourceUri(resource)) {
+        throw new Error("invalid_target");
+    }
+}
+
 async function verifyPkce(
     codeChallengeMethod: string,
     codeChallenge: string,
@@ -134,6 +149,8 @@ export const issueAuthorizationCode = mutation({
         authTime: v.optional(v.number()),
     },
     handler: async (ctx, args) => {
+        validateResourceUri(args.resource);
+
         // 1. PKCE検証（RFC 7636）
         if (!args.codeChallenge || args.codeChallenge.trim() === "") {
             throw new Error("code_challenge required");
@@ -511,6 +528,8 @@ export const upsertAuthorization = mutation({
         resource: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
+        validateResourceUri(args.resource);
+
         const existing = await ctx.db
             .query("oauthAuthorizations")
             .withIndex("by_user_client", (q) =>

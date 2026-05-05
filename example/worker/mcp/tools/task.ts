@@ -1,13 +1,13 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import type { ConvexClient } from 'convex/browser'
-import { api } from '../../../convex/_generated/api'
+import { internal } from '../../../convex/_generated/api'
 import { createJsonResponse, createTextResponse, createErrorResponse } from '../helpers'
 
 const statusEnum = z.enum(['pending', 'in_progress', 'done']);
 const priorityEnum = z.enum(['low', 'medium', 'high']);
 
-export function registerTaskTools(server: McpServer, convex: ConvexClient) {
+export function registerTaskTools(server: McpServer, convex: ConvexClient, userId: string) {
   // List tasks
   server.tool(
     'task-list',
@@ -15,7 +15,9 @@ export function registerTaskTools(server: McpServer, convex: ConvexClient) {
     {},
     async () => {
       try {
-        const tasks = await convex.query(api.tasks.list, {});
+        const tasks = await convex.query(internal.tasks.listByUserId as any, {
+          userId: userId as any,
+        });
         return createJsonResponse(tasks);
       } catch (error) {
         return createErrorResponse(error);
@@ -32,8 +34,9 @@ export function registerTaskTools(server: McpServer, convex: ConvexClient) {
     },
     async ({ taskId }) => {
       try {
-        const task = await convex.query(api.tasks.get, {
+        const task = await convex.query(internal.tasks.getByUserId as any, {
           taskId: taskId as any,
+          userId: userId as any,
         });
         if (!task) {
           return createErrorResponse(new Error('Task not found'));
@@ -57,7 +60,8 @@ export function registerTaskTools(server: McpServer, convex: ConvexClient) {
     },
     async ({ title, description, priority, dueDate }) => {
       try {
-        const taskId = await convex.mutation(api.tasks.create, {
+        const taskId = await convex.mutation(internal.tasks.createByUserId as any, {
+          userId: userId as any,
           title,
           description,
           priority,
@@ -84,7 +88,8 @@ export function registerTaskTools(server: McpServer, convex: ConvexClient) {
     },
     async ({ taskId, title, description, status, priority, dueDate }) => {
       try {
-        await convex.mutation(api.tasks.update, {
+        await convex.mutation(internal.tasks.updateByUserId as any, {
+          userId: userId as any,
           taskId: taskId as any,
           title,
           description,
@@ -108,7 +113,8 @@ export function registerTaskTools(server: McpServer, convex: ConvexClient) {
     },
     async ({ taskId }) => {
       try {
-        await convex.mutation(api.tasks.remove, {
+        await convex.mutation(internal.tasks.removeByUserId as any, {
+          userId: userId as any,
           taskId: taskId as any,
         });
         return createTextResponse(`Task deleted. ID: ${taskId}`);
