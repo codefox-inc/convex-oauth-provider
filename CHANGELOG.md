@@ -1,5 +1,12 @@
 # @codefox-inc/oauth-provider
 
+## 0.4.1
+
+### Patch Changes
+
+- Preserve provider-supported `offline_access` for dynamically registered
+  clients so later consent requests can issue refresh tokens.
+
 ## 0.4.0
 
 ### Minor Changes
