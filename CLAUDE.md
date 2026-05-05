@@ -61,7 +61,7 @@ example/              # Full working example
 1. **Authorization**: Client → `/oauth/authorize` → validates → redirects to `SITE_URL` consent page
 2. **Consent**: User approves → `issueAuthorizationCode()` → creates auth code + authorization record
 3. **Token Exchange**: Client → `/oauth/token` with code + PKCE verifier → returns JWT access token
-4. **API Access**: Client uses Bearer token → Convex validates via JWKS
+4. **Resource Access**: Resource servers validate the JWT access token using JWKS, issuer, `typ`, audience, and required scopes
 
 ### Component Tables
 
@@ -75,10 +75,20 @@ example/              # Full working example
 ### Security Requirements (OAuth 2.1)
 
 - PKCE with S256 **required** for all flows (plain method rejected)
-- Redirect URI exact match (with RFC 8252 localhost variable port exception)
+- Redirect URI exact match (with RFC 8252 loopback variable port exception only)
+- RFC 8707 `resource` is bound to authorization codes and refresh tokens; token requests cannot add a new resource later
+- JWT access tokens follow RFC 9068 conventions (`typ: at+jwt`, `client_id`, `scope`, `jti`)
+- `offline_access` requires explicit OIDC consent (`prompt` contains `consent`)
+- ID tokens include `auth_time`; `max_age` is handled safely when the host cannot prove the current authentication time
 - All tokens stored as SHA-256 hashes
 - Client secrets hashed with bcrypt
 - Authorization codes single-use with replay detection
+
+### Host Integration Notes
+
+- Custom consent UIs must preserve the authorization request `resource` parameter and pass it to `OAuthProvider.issueAuthorizationCode`.
+- Resource servers should terminate bearer tokens: verify `iss`, `aud`, `typ`, expiration, and scopes locally, then call their backend with an internal credential instead of passing the inbound OAuth token through.
+- The example Worker uses `MCP_CONVEX_AUTH_TOKEN` as that internal Worker-to-Convex credential. This is example host plumbing, not an OAuth signing key.
 
 ### Testing
 
@@ -94,6 +104,10 @@ Required for OAuth Provider:
 - `OAUTH_JWKS` - JSON Web Key Set
 - `SITE_URL` - App's public URL (consent page location)
 - `CONVEX_SITE_URL` - Convex deployment URL (issuer)
+
+Example Worker:
+- `MCP_CONVEX_AUTH_TOKEN` - Internal credential used after inbound MCP access token verification
+- `MCP_RESOURCE` - Optional canonical MCP protected resource URI; defaults to the Worker `/mcp` URL
 
 ## Example App
 
