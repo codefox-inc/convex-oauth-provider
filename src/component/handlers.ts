@@ -1177,7 +1177,9 @@ export async function registerHandler(
         if (invalidScopes.length > 0) {
             throw new OAuthError("invalid_scope", `Unsupported scopes: ${invalidScopes.join(", ")}`);
         }
-        const scopes = requestedScopes;
+        const scopes = allowedScopes.includes("offline_access") && !requestedScopes.includes("offline_access")
+            ? [...requestedScopes, "offline_access"]
+            : requestedScopes;
         const authMethod = body.token_endpoint_auth_method;
         if (
             authMethod &&
