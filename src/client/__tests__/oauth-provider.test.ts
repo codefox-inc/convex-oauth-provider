@@ -124,6 +124,45 @@ describe("OAuthProvider", () => {
                 codeChallengeMethod: "S256",
             });
         });
+
+        test("passes resource to authorization records and authorization codes", async () => {
+            const provider = new OAuthProvider(component as any, config);
+            const runMutation = vi.fn(async (mutationRef: string, _args: unknown) => {
+                if (mutationRef === component.mutations.issueAuthorizationCode) {
+                    return "code";
+                }
+                if (mutationRef === component.mutations.upsertAuthorization) {
+                    return "auth";
+                }
+                return undefined;
+            });
+            const ctx = { runMutation };
+
+            await provider.issueAuthorizationCode(ctx as any, {
+                userId: "user-1",
+                clientId: "client-1",
+                scopes: ["openid"],
+                redirectUri: "https://cb",
+                codeChallenge: "challenge",
+                resource: "https://api.example.com/mcp",
+            });
+
+            expect(runMutation).toHaveBeenCalledWith(component.mutations.upsertAuthorization, {
+                userId: "user-1",
+                clientId: "client-1",
+                scopes: ["openid"],
+                resource: "https://api.example.com/mcp",
+            });
+            expect(runMutation).toHaveBeenCalledWith(component.mutations.issueAuthorizationCode, {
+                userId: "user-1",
+                clientId: "client-1",
+                scopes: ["openid"],
+                redirectUri: "https://cb",
+                codeChallenge: "challenge",
+                codeChallengeMethod: "S256",
+                resource: "https://api.example.com/mcp",
+            });
+        });
     });
 
     describe("API methods", () => {

@@ -90,6 +90,25 @@ describe("OAuth handler protocol checks", () => {
         expect(redirect.searchParams.get("error")).toBe("invalid_target");
     });
 
+    test("authorization endpoint treats duplicate resource parameters as invalid_target", async () => {
+        const issueAuthorizationCode = vi.fn(async () => "code");
+
+        const response = await authorizeHandler(
+            {} as any,
+            new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&consent=approve&resource=https%3A%2F%2Fapi.example.com%2Fone&resource=https%3A%2F%2Fapi.example.com%2Ftwo", {
+                method: "GET",
+                headers: { Origin: "https://example.com" },
+            }),
+            { ...config, getUserId: async () => "user" },
+            makeApi({ mutations: { issueAuthorizationCode } as any })
+        );
+
+        expect(response.status).toBe(302);
+        const redirect = new URL(response.headers.get("Location") as string);
+        expect(redirect.searchParams.get("error")).toBe("invalid_target");
+        expect(issueAuthorizationCode).not.toHaveBeenCalled();
+    });
+
     test("authorization endpoint rejects code_challenge values outside PKCE ABNF", async () => {
         const issueAuthorizationCode = vi.fn(async () => "code");
 
@@ -110,12 +129,12 @@ describe("OAuth handler protocol checks", () => {
         expect(issueAuthorizationCode).not.toHaveBeenCalled();
     });
 
-    test("authorization endpoint drops offline_access unless prompt consent is present", async () => {
+    test("authorization endpoint keeps offline_access when prompt contains consent in a space-delimited list", async () => {
         const issueAuthorizationCode = vi.fn(async () => "code");
 
         const response = await authorizeHandler(
             {} as any,
-            new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20offline_access&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&consent=approve", {
+            new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20offline_access&prompt=login%20consent&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&consent=approve", {
                 method: "GET",
                 headers: { Origin: "https://example.com" },
             }),
@@ -126,11 +145,13 @@ describe("OAuth handler protocol checks", () => {
         expect(response.status).toBe(302);
         expect(issueAuthorizationCode).toHaveBeenCalledWith(
             expect.anything(),
-            expect.objectContaining({ scopes: ["openid"] })
+            expect.objectContaining({ scopes: ["openid", "offline_access"] })
         );
     });
 
-    test("authorization endpoint rejects max_age when auth_time is not supported", async () => {
+    test("authorization endpoint returns login_required for max_age it cannot safely satisfy", async () => {
+        const issueAuthorizationCode = vi.fn(async () => "code");
+
         const response = await authorizeHandler(
             {} as any,
             new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&consent=approve&max_age=60", {
@@ -138,13 +159,165 @@ describe("OAuth handler protocol checks", () => {
                 headers: { Origin: "https://example.com" },
             }),
             { ...config, getUserId: async () => "user" },
-            makeApi()
+            makeApi({ mutations: { issueAuthorizationCode } as any })
         );
 
         expect(response.status).toBe(302);
         const redirect = new URL(response.headers.get("Location") as string);
-        expect(redirect.searchParams.get("error")).toBe("invalid_request");
-        expect(redirect.searchParams.get("error_description")).toContain("max_age");
+        expect(redirect.searchParams.get("error")).toBe("login_required");
+        expect(issueAuthorizationCode).not.toHaveBeenCalled();
+    });
+
+    test("token endpoint rejects a resource request when the authorization code was not resource-bound", async () => {
+        const consumeAuthCode = vi.fn(async () => ({
+            userId: "user",
+            scopes: ["openid"],
+            codeChallenge: "challenge",
+            codeChallengeMethod: "S256",
+            redirectUri: "https://cb",
+            codeHash: "hash",
+        }));
+
+        const response = await tokenHandler(
+            {} as any,
+            new Request("https://example.com/oauth/token", {
+                method: "POST",
+                body: new URLSearchParams({
+                    grant_type: "authorization_code",
+                    client_id: "client",
+                    code: "code",
+                    redirect_uri: "https://cb",
+                    code_verifier: "verifier",
+                    client_secret: "secret",
+                    resource: "https://api.example.com/mcp",
+                }),
+            }),
+            config,
+            makeApi({ mutations: { consumeAuthCode } as any })
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ error: "invalid_target" });
+    });
+
+    test("token endpoint rejects a resource request when the refresh token was not resource-bound", async () => {
+        const response = await tokenHandler(
+            {} as any,
+            new Request("https://example.com/oauth/token", {
+                method: "POST",
+                body: new URLSearchParams({
+                    grant_type: "refresh_token",
+                    client_id: "client",
+                    refresh_token: "rt",
+                    client_secret: "secret",
+                    resource: "https://api.example.com/mcp",
+                }),
+            }),
+            config,
+            makeApi({
+                queries: {
+                    getRefreshToken: async () => ({
+                        clientId: "client",
+                        userId: "user",
+                        scopes: ["openid", "offline_access"],
+                        refreshTokenExpiresAt: Date.now() + 3600000,
+                    }),
+                } as any,
+            })
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ error: "invalid_target" });
+    });
+
+    test("token endpoint stores the default audience on refresh tokens when no resource is requested", async () => {
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+        const privateKeyPem = await exportPKCS8(privateKey);
+        const jwk = await exportJWK(publicKey);
+        const saveTokens = vi.fn(async () => undefined);
+
+        const response = await tokenHandler(
+            {} as any,
+            new Request("https://example.com/oauth/token", {
+                method: "POST",
+                body: new URLSearchParams({
+                    grant_type: "authorization_code",
+                    client_id: "client",
+                    code: "code",
+                    redirect_uri: "https://cb",
+                    code_verifier: "verifier",
+                    client_secret: "secret",
+                }),
+            }),
+            {
+                ...config,
+                privateKey: privateKeyPem,
+                jwks: JSON.stringify({ keys: [{ ...jwk, kid: "test-key", alg: "RS256" }] }),
+                applicationID: "default-audience",
+            },
+            makeApi({
+                mutations: {
+                    consumeAuthCode: async () => ({
+                        userId: "user",
+                        scopes: ["openid", "offline_access"],
+                        codeChallenge: "challenge",
+                        codeChallengeMethod: "S256",
+                        redirectUri: "https://cb",
+                        codeHash: "hash",
+                    }),
+                    saveTokens,
+                } as any,
+            })
+        );
+
+        expect(response.status).toBe(200);
+        expect(saveTokens).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ audience: "default-audience", resource: undefined })
+        );
+    });
+
+    test("ID token includes auth_time from the authorization code", async () => {
+        const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+        const privateKeyPem = await exportPKCS8(privateKey);
+        const jwk = await exportJWK(publicKey);
+
+        const response = await tokenHandler(
+            {} as any,
+            new Request("https://example.com/oauth/token", {
+                method: "POST",
+                body: new URLSearchParams({
+                    grant_type: "authorization_code",
+                    client_id: "client",
+                    code: "code",
+                    redirect_uri: "https://cb",
+                    code_verifier: "verifier",
+                    client_secret: "secret",
+                }),
+            }),
+            {
+                ...config,
+                privateKey: privateKeyPem,
+                jwks: JSON.stringify({ keys: [{ ...jwk, kid: "test-key", alg: "RS256" }] }),
+            },
+            makeApi({
+                mutations: {
+                    consumeAuthCode: async () => ({
+                        userId: "user",
+                        scopes: ["openid"],
+                        codeChallenge: "challenge",
+                        codeChallengeMethod: "S256",
+                        redirectUri: "https://cb",
+                        codeHash: "hash",
+                        authTime: 1710000000,
+                    }),
+                } as any,
+            })
+        );
+
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(decodeJwt(body.id_token)).toMatchObject({ auth_time: 1710000000 });
     });
 
     test("authorization code resource becomes access token audience and token resource must match", async () => {
@@ -362,6 +535,37 @@ describe("OAuth handler protocol checks", () => {
         expect(getClient).not.toHaveBeenCalled();
     });
 
+    test("token endpoint treats duplicate resource parameters as invalid_target", async () => {
+        const getClient = vi.fn();
+        const body = new URLSearchParams({
+            grant_type: "authorization_code",
+            client_id: "client",
+            code: "code-1",
+            redirect_uri: "https://cb",
+            code_verifier: "verifier",
+            client_secret: "secret",
+            resource: "https://api.example.com/one",
+        });
+        body.append("resource", "https://api.example.com/two");
+
+        const response = await tokenHandler(
+            {} as any,
+            new Request("https://example.com/oauth/token", {
+                method: "POST",
+                body,
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            }),
+            config,
+            makeApi({ queries: { getClient } as any })
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+            error: "invalid_target",
+        });
+        expect(getClient).not.toHaveBeenCalled();
+    });
+
     test("token endpoint rejects Basic auth combined with client_secret_post", async () => {
         const verifyClientSecret = vi.fn(async () => true);
         const basic = btoa("client:basic-secret");
@@ -466,6 +670,7 @@ describe("OAuth handler protocol checks", () => {
         );
 
         expect(response.status).toBe(401);
+        expect(response.headers.get("WWW-Authenticate")).toBe('Basic realm="oauth"');
         await expect(response.json()).resolves.toMatchObject({
             error: "invalid_client",
         });
@@ -577,5 +782,99 @@ describe("OAuth handler protocol checks", () => {
                 policyUrl: "http://[::1]/policy",
             })
         );
+    });
+
+    test("DCR rejects invalid redirect URIs with invalid_redirect_uri", async () => {
+        const registerClient = vi.fn();
+
+        const response = await registerHandler(
+            {} as any,
+            new Request("https://example.com/oauth/register", {
+                method: "POST",
+                body: JSON.stringify({
+                    redirect_uris: ["http://client.example.com/cb"],
+                }),
+                headers: { "Content-Type": "application/json" },
+            }),
+            config,
+            makeApi({ clientManagement: { registerClient } as any })
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+            error: "invalid_redirect_uri",
+        });
+        expect(registerClient).not.toHaveBeenCalled();
+    });
+
+    test("DCR accepts RFC8252 private-use redirect URIs and rejects unsafe variants", async () => {
+        const registerClient = vi.fn(async () => ({
+            clientId: "client",
+            clientIdIssuedAt: 0,
+        }));
+
+        const accepted = await registerHandler(
+            {} as any,
+            new Request("https://example.com/oauth/register", {
+                method: "POST",
+                body: JSON.stringify({
+                    redirect_uris: ["com.example.app:/oauth2redirect"],
+                    token_endpoint_auth_method: "none",
+                }),
+                headers: { "Content-Type": "application/json" },
+            }),
+            config,
+            makeApi({ clientManagement: { registerClient } as any })
+        );
+
+        expect(accepted.status).toBe(201);
+        expect(registerClient).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                redirectUris: ["com.example.app:/oauth2redirect"],
+                type: "public",
+            })
+        );
+
+        for (const redirectUri of [
+            "myapp:/oauth2redirect",
+            "com.example.app://oauth2redirect",
+            "com.example.app:/oauth2redirect#fragment",
+        ]) {
+            const rejected = await registerHandler(
+                {} as any,
+                new Request("https://example.com/oauth/register", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        redirect_uris: [redirectUri],
+                        token_endpoint_auth_method: "none",
+                    }),
+                    headers: { "Content-Type": "application/json" },
+                }),
+                config,
+                makeApi({ clientManagement: { registerClient } as any })
+            );
+
+            expect(rejected.status).toBe(400);
+            await expect(rejected.json()).resolves.toMatchObject({
+                error: "invalid_redirect_uri",
+            });
+        }
+    });
+
+    test("userinfo missing or non-Bearer credentials challenge without OAuth error", async () => {
+        const headerCases: HeadersInit[] = [new Headers(), { Authorization: "Basic abc" }];
+        for (const headers of headerCases) {
+            const response = await userInfoHandler(
+                {} as any,
+                new Request("https://example.com/oauth/userinfo", { headers }),
+                config,
+                async () => null
+            );
+
+            expect(response.status).toBe(401);
+            const challenge = response.headers.get("WWW-Authenticate");
+            expect(challenge).toBe('Bearer realm="userinfo"');
+        }
     });
 });

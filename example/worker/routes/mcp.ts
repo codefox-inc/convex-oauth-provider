@@ -2,14 +2,20 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { ConvexClient } from 'convex/browser'
+import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose'
 import { createMcpServer } from '../mcp/server'
 
 type Bindings = {
   CONVEX_URL?: string;
+  CONVEX_SITE_URL?: string;
+  SITE_URL?: string;
+  OAUTH_PREFIX?: string;
   MCP_RESOURCE?: string;
+  MCP_CONVEX_AUTH_TOKEN?: string;
 }
 
 const mcpRoutes = new Hono<{ Bindings: Bindings }>()
+const ACCESS_TOKEN_TYP_VALUES = new Set(['at+jwt', 'application/at+jwt'])
 
 // Helper: Token Extraction
 function extractToken(c: Context): string | null {
@@ -20,54 +26,94 @@ function extractToken(c: Context): string | null {
   return null
 }
 
+function joinUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+function getConvexSiteUrl(env: Bindings): string | null {
+  if (env.CONVEX_SITE_URL) {
+    return env.CONVEX_SITE_URL
+  }
+  const convexUrl = env.CONVEX_URL || process.env.CONVEX_URL
+  if (convexUrl) {
+    return convexUrl.replace('.cloud', '.site')
+  }
+  return null
+}
+
+function getAuthorizationServerIssuer(env: Bindings): string | null {
+  const convexSiteUrl = getConvexSiteUrl(env)
+  if (!convexSiteUrl) {
+    return null
+  }
+  const prefix = env.OAUTH_PREFIX || process.env.OAUTH_PREFIX || '/oauth'
+  return joinUrl(convexSiteUrl, prefix)
+}
+
+function getPublicBaseUrl(c: Context<{ Bindings: Bindings }>): string {
+  return c.env?.SITE_URL || process.env.SITE_URL || new URL(c.req.url).origin
+}
+
 function getCanonicalMcpResource(c: Context<{ Bindings: Bindings }>): string {
-  return c.env?.MCP_RESOURCE || `${new URL(c.req.url).origin}/mcp`
+  const configuredResource = c.env?.MCP_RESOURCE || process.env.MCP_RESOURCE
+  const baseUrl = getPublicBaseUrl(c)
+  const resourceUrl = configuredResource
+    ? new URL(
+      configuredResource.startsWith('http')
+        ? configuredResource
+        : configuredResource.startsWith('/')
+          ? configuredResource
+          : `/${configuredResource}`,
+      baseUrl
+    )
+    : new URL('/mcp', baseUrl)
+
+  resourceUrl.hash = ''
+  resourceUrl.search = ''
+  return resourceUrl.toString()
 }
 
 function getProtectedResourceMetadataUrl(c: Context<{ Bindings: Bindings }>): string {
-  return `${new URL(c.req.url).origin}/.well-known/oauth-protected-resource/mcp`
+  const resourceUrl = new URL(getCanonicalMcpResource(c))
+  const resourcePath = resourceUrl.pathname === '/' ? '' : resourceUrl.pathname
+  return new URL(
+    `/.well-known/oauth-protected-resource${resourcePath}`,
+    resourceUrl.origin
+  ).toString()
 }
 
 function invalidTokenChallenge(c: Context<{ Bindings: Bindings }>): string {
   return `Bearer realm="mcp", error="invalid_token", resource_metadata="${getProtectedResourceMetadataUrl(c)}"`
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  const [, payload] = token.split('.')
-  if (!payload) {
-    return null
-  }
-
+async function verifyMcpAccessToken(
+  c: Context<{ Bindings: Bindings }>,
+  token: string
+): Promise<'valid' | 'invalid' | 'missing_oauth_configuration'> {
   try {
-    const normalized = payload.replaceAll('-', '+').replaceAll('_', '/')
-    const padded = normalized.padEnd(
-      normalized.length + ((4 - (normalized.length % 4)) % 4),
-      '='
+    const header = decodeProtectedHeader(token)
+    const typ = typeof header.typ === 'string' ? header.typ.toLowerCase() : ''
+    if (!ACCESS_TOKEN_TYP_VALUES.has(typ)) {
+      return 'invalid'
+    }
+
+    const issuer = getAuthorizationServerIssuer(c.env)
+    if (!issuer) {
+      return 'missing_oauth_configuration'
+    }
+
+    const expectedAudience = getCanonicalMcpResource(c)
+    const jwks = createRemoteJWKSet(
+      new URL(`${issuer}/.well-known/jwks.json`)
     )
-    const decoded = atob(padded)
-    const parsed: unknown = JSON.parse(decoded)
-    return parsed && typeof parsed === 'object'
-      ? (parsed as Record<string, unknown>)
-      : null
+    const { payload } = await jwtVerify(token, jwks, {
+      audience: expectedAudience,
+      issuer,
+    })
+    return payload.aud === expectedAudience ? 'valid' : 'invalid'
   } catch {
-    return null
+    return 'invalid'
   }
-}
-
-function hasExpectedAudience(token: string, expectedAudience: string): boolean {
-  const payload = decodeJwtPayload(token)
-  if (!payload) {
-    return false
-  }
-
-  const { aud } = payload
-  if (typeof aud === 'string') {
-    return aud === expectedAudience
-  }
-  if (Array.isArray(aud)) {
-    return aud.includes(expectedAudience)
-  }
-  return false
 }
 
 // Helper: Get Convex URL
@@ -81,6 +127,10 @@ function getConvexUrl(env: Bindings): string | null {
   return null
 }
 
+function getMcpConvexAuthToken(env: Bindings): string | null {
+  return env.MCP_CONVEX_AUTH_TOKEN || process.env.MCP_CONVEX_AUTH_TOKEN || null
+}
+
 // Handle all MCP requests (GET/POST/DELETE)
 mcpRoutes.all('/', async (c) => {
   const token = extractToken(c)
@@ -92,9 +142,18 @@ mcpRoutes.all('/', async (c) => {
     return c.json({ error: 'Missing authentication token' }, 401)
   }
 
-  // This example keeps signature verification delegated to Convex. The audience
-  // check is a resource-server guard before forwarding the bearer token.
-  if (!hasExpectedAudience(token, getCanonicalMcpResource(c))) {
+  const tokenVerification = await verifyMcpAccessToken(c, token)
+  if (tokenVerification === 'missing_oauth_configuration') {
+    return c.json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32603,
+        message: 'Missing CONVEX_URL or CONVEX_SITE_URL configuration',
+      },
+      id: null,
+    }, 500)
+  }
+  if (tokenVerification === 'invalid') {
     c.header('WWW-Authenticate', invalidTokenChallenge(c))
     return c.json({ error: 'Invalid token audience' }, 401)
   }
@@ -109,8 +168,20 @@ mcpRoutes.all('/', async (c) => {
     }, 500)
   }
 
+  const convexAuthToken = getMcpConvexAuthToken(c.env)
+  if (!convexAuthToken) {
+    return c.json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32603,
+        message: 'Missing MCP_CONVEX_AUTH_TOKEN configuration',
+      },
+      id: null,
+    }, 500)
+  }
+
   const convex = new ConvexClient(convexUrl)
-  convex.setAuth(() => Promise.resolve(token))
+  convex.setAuth(() => Promise.resolve(convexAuthToken))
 
   // Create MCP Server with tools
   const mcpServer = createMcpServer(convex)

@@ -15,6 +15,9 @@ import { hashToken, isHashedToken } from "./token_security.js";
 export function isLoopbackRedirectUri(uri: string): boolean {
   try {
     const parsed = new URL(uri);
+    if (parsed.username || parsed.password || parsed.hash) {
+      return false;
+    }
     return (
       parsed.hostname === "127.0.0.1" ||
       parsed.hostname === "::1" ||
@@ -81,7 +84,7 @@ export function matchRedirectUri(requested: string, registered: string[]): boole
   if (isLoopbackRedirectUri(requested)) {
     try {
       const reqUrl = new URL(requested);
-      if (reqUrl.protocol !== "http:") {
+      if (reqUrl.protocol !== "http:" || reqUrl.username || reqUrl.password || reqUrl.hash) {
         return false;
       }
       for (const regUri of registered) {
@@ -90,6 +93,9 @@ export function matchRedirectUri(requested: string, registered: string[]): boole
           // loopback 例外は port の差分だけを許容する
           if (
             regUrl.protocol === "http:" &&
+            !regUrl.username &&
+            !regUrl.password &&
+            !regUrl.hash &&
             reqUrl.hostname === regUrl.hostname &&
             reqUrl.pathname === regUrl.pathname &&
             reqUrl.search === regUrl.search
@@ -125,6 +131,7 @@ export const issueAuthorizationCode = mutation({
         codeChallengeMethod: v.string(),
         nonce: v.optional(v.string()),
         resource: v.optional(v.string()),
+        authTime: v.optional(v.number()),
     },
     handler: async (ctx, args) => {
         // 1. PKCE検証（RFC 7636）
@@ -175,6 +182,7 @@ export const issueAuthorizationCode = mutation({
             codeChallengeMethod: args.codeChallengeMethod,
             nonce: args.nonce,
             resource: args.resource,
+            authTime: args.authTime ?? Math.floor(Date.now() / 1000),
             expiresAt: Date.now() + OAUTH_CONSTANTS.CODE_EXPIRY_MS,
         });
 
@@ -222,17 +230,15 @@ export const consumeAuthCode = mutation({
                 throw new Error("invalid_grant");
             }
 
-            // redirect_uri validation: 発行時に設定されている場合は必須
-            // RFC 6749 Section 4.1.3: redirect_uri REQUIRED if included in authorization request
-            if (authCode.redirectUri) {
-                if (!args.redirectUri) {
-                    throw new Error("redirect_uri_required");
-                }
-                if (authCode.redirectUri !== args.redirectUri) {
-                    throw new Error("redirect_uri_mismatch");
-                }
+            // OAuth 2.1: token request redirect_uri is optional.
+            // If supplied, it must exactly match the stored authorization code binding.
+            if (args.redirectUri && authCode.redirectUri !== args.redirectUri) {
+                throw new Error("redirect_uri_mismatch");
             }
 
+            if (!authCode.resource && args.resource) {
+                throw new Error("invalid_target");
+            }
             if (authCode.resource && args.resource && authCode.resource !== args.resource) {
                 throw new Error("invalid_target");
             }
@@ -287,6 +293,7 @@ export const consumeAuthCode = mutation({
             redirectUri: authCode.redirectUri,
             nonce: authCode.nonce,
             resource: authCode.resource,
+            authTime: authCode.authTime,
             codeHash, // Return code hash to link tokens
         };
     },
@@ -309,6 +316,7 @@ export const saveTokens = mutation({
         refreshTokenExpiresAt: v.optional(v.number()),
         authorizationCode: v.optional(v.string()), // Hashed code for replay detection (RFC Line 1136)
         resource: v.optional(v.string()),
+        audience: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         const authorizationCode = args.authorizationCode;
@@ -353,6 +361,7 @@ export const rotateRefreshToken = mutation({
         expiresAt: v.number(),
         refreshTokenExpiresAt: v.optional(v.number()),
         resource: v.optional(v.string()),
+        audience: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         // Hash the old refresh token for lookup
@@ -424,6 +433,7 @@ export const rotateRefreshToken = mutation({
             expiresAt: args.expiresAt,
             refreshTokenExpiresAt: args.refreshTokenExpiresAt,
             resource: args.resource,
+            audience: args.audience,
         });
     },
 });
@@ -498,6 +508,7 @@ export const upsertAuthorization = mutation({
         userId: v.string(),
         clientId: v.string(),
         scopes: v.array(v.string()),
+        resource: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         const existing = await ctx.db
@@ -514,6 +525,7 @@ export const upsertAuthorization = mutation({
             const mergedScopes = [...new Set([...existing.scopes, ...args.scopes])];
             await ctx.db.patch(existing._id, {
                 scopes: mergedScopes,
+                resource: args.resource ?? existing.resource,
                 lastUsedAt: now,
             });
             return existing._id;
@@ -523,6 +535,7 @@ export const upsertAuthorization = mutation({
                 userId: args.userId,
                 clientId: args.clientId,
                 scopes: args.scopes,
+                resource: args.resource,
                 authorizedAt: now,
                 lastUsedAt: now,
             });

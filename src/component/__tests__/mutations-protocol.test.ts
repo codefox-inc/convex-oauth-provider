@@ -190,6 +190,174 @@ describe("OAuth mutation protocol enforcement", () => {
     expect(codeData.resource).toBe("https://api.example.com/mcp");
   });
 
+  test("consumeAuthCode allows redirect_uri omission and validates it only when supplied", async () => {
+    const t = convexTest(schema, modules);
+    const client = await t.mutation(api.clientManagement.registerClient, {
+      name: "OAuth 2.1 Client",
+      type: "public",
+      redirectUris: ["https://example.com/callback"],
+      scopes: ["openid"],
+    });
+
+    const omittedRedirectCode = await t.mutation(api.mutations.issueAuthorizationCode, {
+      userId: "user123",
+      clientId: client.clientId,
+      scopes: ["openid"],
+      redirectUri: "https://example.com/callback",
+      codeChallenge: validCodeChallenge,
+      codeChallengeMethod: "S256",
+    });
+
+    const omittedRedirectResult = await t.mutation(api.mutations.consumeAuthCode, {
+      code: omittedRedirectCode,
+      clientId: client.clientId,
+      codeVerifier: validCodeVerifier,
+    });
+
+    expect(omittedRedirectResult.redirectUri).toBe("https://example.com/callback");
+
+    const mismatchedRedirectCode = await t.mutation(api.mutations.issueAuthorizationCode, {
+      userId: "user123",
+      clientId: client.clientId,
+      scopes: ["openid"],
+      redirectUri: "https://example.com/callback",
+      codeChallenge: validCodeChallenge,
+      codeChallengeMethod: "S256",
+    });
+
+    await expect(
+      t.mutation(api.mutations.consumeAuthCode, {
+        code: mismatchedRedirectCode,
+        clientId: client.clientId,
+        redirectUri: "https://example.com/other",
+        codeVerifier: validCodeVerifier,
+      })
+    ).rejects.toThrow("redirect_uri_mismatch");
+  });
+
+  test("consumeAuthCode rejects token resource when authorization code has no resource binding", async () => {
+    const t = convexTest(schema, modules);
+    const client = await t.mutation(api.clientManagement.registerClient, {
+      name: "Unbound Resource Client",
+      type: "public",
+      redirectUris: ["https://example.com/callback"],
+      scopes: ["openid"],
+    });
+
+    const code = await t.mutation(api.mutations.issueAuthorizationCode, {
+      userId: "user123",
+      clientId: client.clientId,
+      scopes: ["openid"],
+      redirectUri: "https://example.com/callback",
+      codeChallenge: validCodeChallenge,
+      codeChallengeMethod: "S256",
+    });
+
+    await expect(
+      t.mutation(api.mutations.consumeAuthCode, {
+        code,
+        clientId: client.clientId,
+        redirectUri: "https://example.com/callback",
+        codeVerifier: validCodeVerifier,
+        resource: "https://api.example.com/mcp",
+      })
+    ).rejects.toThrow("invalid_target");
+  });
+
+  test("issueAuthorizationCode persists auth_time for OIDC ID tokens", async () => {
+    const t = convexTest(schema, modules);
+    const client = await t.mutation(api.clientManagement.registerClient, {
+      name: "OIDC Client",
+      type: "public",
+      redirectUris: ["https://example.com/callback"],
+      scopes: ["openid"],
+    });
+
+    const code = await t.mutation(api.mutations.issueAuthorizationCode, {
+      userId: "user123",
+      clientId: client.clientId,
+      scopes: ["openid"],
+      redirectUri: "https://example.com/callback",
+      codeChallenge: validCodeChallenge,
+      codeChallengeMethod: "S256",
+      authTime: 1710000000,
+    });
+
+    const codeData = await t.mutation(api.mutations.consumeAuthCode, {
+      code,
+      clientId: client.clientId,
+      redirectUri: "https://example.com/callback",
+      codeVerifier: validCodeVerifier,
+    });
+
+    expect(codeData.authTime).toBe(1710000000);
+  });
+
+  test("refresh token rotation persists resource and default audience bindings", async () => {
+    const t = convexTest(schema, modules);
+    const client = await t.mutation(api.clientManagement.registerClient, {
+      name: "Audience Client",
+      type: "confidential",
+      redirectUris: ["https://example.com/callback"],
+      scopes: ["openid", "offline_access"],
+    });
+
+    await t.mutation(api.mutations.saveTokens, {
+      accessToken: "old-access-token",
+      refreshToken: "old-refresh-token",
+      clientId: client.clientId,
+      userId: "user123",
+      scopes: ["openid", "offline_access"],
+      expiresAt: Date.now() + 3600000,
+      refreshTokenExpiresAt: Date.now() + 2592000000,
+      audience: "default-audience",
+    });
+
+    await t.mutation(api.mutations.rotateRefreshToken, {
+      oldRefreshToken: "old-refresh-token",
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+      clientId: client.clientId,
+      userId: "user123",
+      scopes: ["openid", "offline_access"],
+      expiresAt: Date.now() + 3600000,
+      refreshTokenExpiresAt: Date.now() + 2592000000,
+      audience: "default-audience",
+    });
+
+    const newToken = await t.run(async (ctx) => {
+      const tokens = await ctx.db.query("oauthTokens").collect();
+      return tokens.find((token) => token.clientId === client.clientId);
+    });
+
+    expect(newToken?.resource).toBeUndefined();
+    expect(newToken?.audience).toBe("default-audience");
+  });
+
+  test("registerClient rejects client type and token_endpoint_auth_method contradictions", async () => {
+    const t = convexTest(schema, modules);
+
+    await expect(
+      t.mutation(api.clientManagement.registerClient, {
+        name: "Contradictory Public Client",
+        type: "public",
+        redirectUris: ["https://example.com/callback"],
+        scopes: ["openid"],
+        tokenEndpointAuthMethod: "client_secret_basic",
+      })
+    ).rejects.toThrow("invalid_client_metadata");
+
+    await expect(
+      t.mutation(api.clientManagement.registerClient, {
+        name: "Contradictory Confidential Client",
+        type: "confidential",
+        redirectUris: ["https://example.com/callback"],
+        scopes: ["openid"],
+        tokenEndpointAuthMethod: "none",
+      })
+    ).rejects.toThrow("invalid_client_metadata");
+  });
+
   test.each([
     [
       "client_id mismatch",

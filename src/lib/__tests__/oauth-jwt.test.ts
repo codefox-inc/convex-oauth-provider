@@ -169,6 +169,27 @@ describe("OAuth JWT and Utilities", () => {
             ).rejects.toThrow(/typ/);
         });
 
+        it("should verify access tokens with the RFC9068 media-type protected header typ", async () => {
+            const privateKey = await importPKCS8(TEST_PRIVATE_KEY, "RS256");
+            const token = await new SignJWT({})
+                .setProtectedHeader({ alg: "RS256", typ: "application/at+jwt", kid: "test-key-1" })
+                .setIssuedAt()
+                .setIssuer("https://example.com")
+                .setSubject("user123")
+                .setAudience("test-audience")
+                .setExpirationTime("1h")
+                .sign(privateKey);
+
+            const payload = await verifyAccessToken(
+                token,
+                { jwks: TEST_JWKS },
+                "https://example.com",
+                "test-audience"
+            );
+
+            expect(payload.sub).toBe("user123");
+        });
+
         it("should verify with JWKS missing kid", async () => {
             const token = await sign(
                 { custom: "claim" },

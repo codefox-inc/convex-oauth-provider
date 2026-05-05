@@ -59,6 +59,43 @@ function isValidRedirectUri(uri: string): boolean {
     }
 
     if (parsed.hash) return false;
+    if (parsed.username || parsed.password) return false;
+
+    const host = parsed.hostname.toLowerCase();
+    const isLoopback =
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "[::1]" ||
+        host === "::1";
+
+    if (parsed.protocol === "https:") return true;
+    if (parsed.protocol === "http:" && isLoopback) return true;
+    if (isValidPrivateUseRedirectUri(parsed)) return true;
+
+    return false;
+}
+
+function isValidPrivateUseRedirectUri(parsed: URL): boolean {
+    const scheme = parsed.protocol.slice(0, -1);
+    const reverseDomainStyle = /^[a-z][a-z0-9]*(\.[a-z0-9][a-z0-9-]*){2,}$/i;
+    return (
+        reverseDomainStyle.test(scheme) &&
+        parsed.hostname === "" &&
+        parsed.host === "" &&
+        parsed.pathname.startsWith("/") &&
+        parsed.pathname.length > 1
+    );
+}
+
+function isValidMetadataUri(uri: string): boolean {
+    let parsed: URL;
+    try {
+        parsed = new URL(uri);
+    } catch {
+        return false;
+    }
+
+    if (parsed.hash || parsed.username || parsed.password) return false;
 
     const host = parsed.hostname.toLowerCase();
     const isLoopback =
@@ -86,13 +123,23 @@ function isValidResourceUri(value: string): boolean {
     }
 }
 
-function getSingleFormString(formData: FormData, name: string): string | null {
-    const values = formData.getAll(name);
+function getResourceFormString(formData: FormData): string | null {
+    const values = formData.getAll("resource");
     if (values.length === 0) return null;
     if (values.length > 1) {
-        throw new OAuthError("invalid_request", `Duplicate parameter: ${name}`);
+        throw new OAuthError("invalid_target", "Multiple resource parameters are not supported");
     }
     return formValueToString(values[0]);
+}
+
+function createInvalidClientResponse(error: OAuthError, headers: Record<string, string>): Response {
+    if (error.code === "invalid_client" && error.statusCode === 401) {
+        return error.toResponse({
+            ...headers,
+            "WWW-Authenticate": 'Basic realm="oauth"',
+        });
+    }
+    return error.toResponse(headers);
 }
 
 function getRegisteredTokenAuthMethod(client: {
@@ -205,6 +252,7 @@ export interface OAuthComponentAPI {
             scopes: string[];
             refreshTokenExpiresAt?: number;
             resource?: string;
+            audience?: string;
         } | null>;
         getTokensByUser: (ctx: RunQueryCtx, args: { userId: string }) => Promise<Array<{
             _id: string;
@@ -225,6 +273,7 @@ export interface OAuthComponentAPI {
             codeChallengeMethod: string;
             nonce?: string;
             resource?: string;
+            authTime?: number;
         }) => Promise<string>;
         consumeAuthCode: (ctx: RunMutationCtx, args: {
             code: string;
@@ -241,6 +290,7 @@ export interface OAuthComponentAPI {
             nonce?: string;
             codeHash: string;
             resource?: string;
+            authTime?: number;
         }>;
         saveTokens: (ctx: RunMutationCtx, args: {
             accessToken: string;
@@ -252,6 +302,7 @@ export interface OAuthComponentAPI {
             refreshTokenExpiresAt?: number;
             authorizationCode?: string;
             resource?: string;
+            audience?: string;
         }) => Promise<void>;
         rotateRefreshToken: (ctx: RunMutationCtx, args: {
             oldRefreshToken: string;
@@ -263,11 +314,13 @@ export interface OAuthComponentAPI {
             expiresAt: number;
             refreshTokenExpiresAt: number;
             resource?: string;
+            audience?: string;
         }) => Promise<void>;
         upsertAuthorization: (ctx: RunMutationCtx, args: {
             userId: string;
             clientId: string;
             scopes: string[];
+            resource?: string;
         }) => Promise<string>;
         updateAuthorizationLastUsed: (ctx: RunMutationCtx, args: {
             userId: string;
@@ -332,6 +385,7 @@ export async function authorizeHandler(
     const codeChallengeMethod = params.get("code_challenge_method");
     const nonce = params.get("nonce") ?? undefined;
     const resource = params.get("resource");
+    const resourceValues = params.getAll("resource");
     const maxAge = params.get("max_age");
 
     if (!clientId) {
@@ -360,7 +414,6 @@ export async function authorizeHandler(
         "code_challenge",
         "code_challenge_method",
         "nonce",
-        "resource",
         "max_age",
     ];
     const duplicateParameter = singletonParameters.find(
@@ -371,6 +424,15 @@ export async function authorizeHandler(
             redirectUri,
             "invalid_request",
             `Duplicate parameter: ${duplicateParameter}`,
+            state
+        );
+    }
+
+    if (resourceValues.length > 1) {
+        return buildAuthorizeErrorRedirect(
+            redirectUri,
+            "invalid_target",
+            "Multiple resource parameters are not supported",
             state
         );
     }
@@ -393,11 +455,20 @@ export async function authorizeHandler(
         );
     }
 
+    const promptValues = new Set((prompt ?? "").split(/\s+/).filter(Boolean));
     if (maxAge !== null) {
+        if (!/^(0|[1-9]\d*)$/.test(maxAge)) {
+            return buildAuthorizeErrorRedirect(
+                redirectUri,
+                "invalid_request",
+                "max_age must be a non-negative integer",
+                state
+            );
+        }
         return buildAuthorizeErrorRedirect(
             redirectUri,
-            "invalid_request",
-            "max_age is not supported",
+            "login_required",
+            "Current authentication time cannot satisfy max_age",
             state
         );
     }
@@ -414,7 +485,7 @@ export async function authorizeHandler(
     let requestedScopes = scope
         ? scope.split(" ").filter(Boolean)
         : [];
-    if (requestedScopes.includes("offline_access") && prompt !== "consent") {
+    if (requestedScopes.includes("offline_access") && !promptValues.has("consent")) {
         requestedScopes = requestedScopes.filter((s) => s !== "offline_access");
     }
     if (requestedScopes.length === 0) {
@@ -491,6 +562,7 @@ export async function authorizeHandler(
         codeChallengeMethod,
         nonce,
         resource: resource ?? undefined,
+        authTime: Math.floor(Date.now() / 1000),
     });
 
     const redirect = new URL(redirectUri);
@@ -598,7 +670,6 @@ export async function tokenHandler(
             "client_secret",
             "refresh_token",
             "scope",
-            "resource",
         ];
         const duplicateParameter = singleValueParameters.find(
             (name) => formData.getAll(name).length > 1
@@ -613,7 +684,7 @@ export async function tokenHandler(
         const bodyClientId = formValueToString(formData.get("client_id"));
         const codeVerifier = formValueToString(formData.get("code_verifier"));
         const bodyClientSecret = formValueToString(formData.get("client_secret"));
-        const requestedResource = validateRequestedResource(getSingleFormString(formData, "resource"));
+        const requestedResource = validateRequestedResource(getResourceFormString(formData));
         const authHeader = request.headers.get("Authorization");
 
         let clientId = bodyClientId;
@@ -680,7 +751,14 @@ export async function tokenHandler(
             const accessTokenExpiresIn = 3600;
             const issuerUrl = getIssuerUrl(config);
             const keyId = getSigningKeyId(config);
-            const accessTokenAudience = codeData.resource ?? requestedResource ?? config.applicationID ?? "convex";
+            const defaultAudience = config.applicationID ?? "convex";
+            if (requestedResource && !codeData.resource) {
+                throw new OAuthError("invalid_target", "Requested resource was not included in the authorization grant");
+            }
+            if (codeData.resource && requestedResource && codeData.resource !== requestedResource) {
+                throw new OAuthError("invalid_target", "Requested resource does not match authorization grant");
+            }
+            const accessTokenAudience = codeData.resource ?? defaultAudience;
 
             // Access Token
             const accessToken = await sign(
@@ -710,6 +788,7 @@ export async function tokenHandler(
                     iss: issuerUrl,
                     aud: clientId,
                     nonce: codeData.nonce,
+                    auth_time: codeData.authTime,
                 };
 
                 idToken = await new SignJWT(idTokenClaims)
@@ -735,7 +814,8 @@ export async function tokenHandler(
                 expiresAt: (now + accessTokenExpiresIn) * 1000,
                 refreshTokenExpiresAt: refreshToken ? (now + 3600 * 24 * 30) * 1000 : undefined,
                 authorizationCode: codeData.codeHash, // Link to authorization code
-                resource: codeData.resource ?? requestedResource,
+                resource: codeData.resource,
+                audience: accessTokenAudience,
             });
 
             // F. Create/Update Authorization Record
@@ -743,6 +823,7 @@ export async function tokenHandler(
                 userId,
                 clientId,
                 scopes: codeData.scopes,
+                resource: codeData.resource,
             });
 
             // Build response
@@ -778,7 +859,11 @@ export async function tokenHandler(
 
             if (!oldToken) throw new OAuthError("invalid_grant", "Invalid refresh token");
             const refreshTokenResource = oldToken.resource;
-            const accessTokenAudience = requestedResource ?? refreshTokenResource ?? config.applicationID ?? "convex";
+            const refreshTokenAudience = oldToken.audience ?? refreshTokenResource ?? config.applicationID ?? "convex";
+            const accessTokenAudience = refreshTokenResource ?? refreshTokenAudience;
+            if (!refreshTokenResource && requestedResource) {
+                throw new OAuthError("invalid_target", "Requested resource was not included in the refresh token grant");
+            }
             if (refreshTokenResource && requestedResource && requestedResource !== refreshTokenResource) {
                 throw new OAuthError("invalid_target", "Requested resource does not match refresh token grant");
             }
@@ -877,6 +962,7 @@ export async function tokenHandler(
                     expiresAt: (now + accessTokenExpiresIn) * 1000,
                     refreshTokenExpiresAt: (now + 3600 * 24 * 30) * 1000,
                     resource: refreshTokenResource,
+                    audience: refreshTokenAudience,
                 });
 
                 // Update authorization lastUsedAt
@@ -918,7 +1004,7 @@ export async function tokenHandler(
     } catch (e) {
         console.error(e);
         if (e instanceof OAuthError) {
-            return e.toResponse(tokenHeaders);
+            return createInvalidClientResponse(e, tokenHeaders);
         }
         if (e instanceof Error) {
             // シンプルなエラーメッセージを先にチェック（完全一致）
@@ -926,7 +1012,10 @@ export async function tokenHandler(
                 return new OAuthError("invalid_grant", "Invalid grant").toResponse(tokenHeaders);
             }
             if (e.message === "invalid_client") {
-                return new OAuthError("invalid_client", "Invalid client", 401).toResponse(tokenHeaders);
+                return createInvalidClientResponse(
+                    new OAuthError("invalid_client", "Invalid client", 401),
+                    tokenHeaders
+                );
             }
 
             // 特定エラーメッセージをOAuthエラーコードにマッピング（部分一致）
@@ -973,7 +1062,7 @@ export async function userInfoHandler(
             status: 401,
             headers: {
                 ...headers,
-                "WWW-Authenticate": 'Bearer realm="userinfo", error="invalid_token", error_description="Missing bearer token"',
+                "WWW-Authenticate": 'Bearer realm="userinfo"',
             },
         });
     }
@@ -1109,7 +1198,7 @@ export async function registerHandler(
         }
         const invalidRedirect = redirectUris.find((uri) => !isValidRedirectUri(uri));
         if (invalidRedirect) {
-            throw new OAuthError("invalid_request", `Invalid redirect_uri: ${invalidRedirect}`);
+            throw new OAuthError("invalid_redirect_uri", `Invalid redirect_uri: ${invalidRedirect}`);
         }
         const metadataUrls = {
             logo_uri: body.logo_uri,
@@ -1118,7 +1207,7 @@ export async function registerHandler(
             policy_uri: body.policy_uri,
         };
         for (const [field, uri] of Object.entries(metadataUrls)) {
-            if (uri !== undefined && !isValidRedirectUri(uri)) {
+            if (uri !== undefined && !isValidMetadataUri(uri)) {
                 throw new OAuthError(
                     "invalid_client_metadata",
                     `Invalid ${field}: ${uri}`

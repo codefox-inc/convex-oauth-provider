@@ -1564,7 +1564,7 @@ describe("OAuth 2.1 Flow", () => {
         const response = await registerHandler({} as any, request, config, apiStub);
         expect(response.status).toBe(400);
         const body = await response.json();
-        expect(body.error).toBe("invalid_request");
+        expect(body.error).toBe("invalid_redirect_uri");
         expect(body.error_description).toContain("Invalid redirect_uri");
     });
 
@@ -2771,8 +2771,7 @@ describe("OAuth 2.1 Flow", () => {
 
         expect(response.status).toBe(401);
         const wwwAuth = response.headers.get("WWW-Authenticate");
-        expect(wwwAuth).toContain("invalid_token");
-        expect(wwwAuth).toContain("Missing bearer token");
+        expect(wwwAuth).toBe('Bearer realm="userinfo"');
     });
 
     test("UserInfo: returns 401 when Authorization header is malformed", async () => {
@@ -2787,8 +2786,7 @@ describe("OAuth 2.1 Flow", () => {
 
         expect(response.status).toBe(401);
         const wwwAuth = response.headers.get("WWW-Authenticate");
-        expect(wwwAuth).toContain("invalid_token");
-        expect(wwwAuth).toContain("Missing bearer token");
+        expect(wwwAuth).toBe('Bearer realm="userinfo"');
     });
 
     test("UserInfo: returns 401 when token verification fails", async () => {

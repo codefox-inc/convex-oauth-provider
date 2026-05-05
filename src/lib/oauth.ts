@@ -210,7 +210,7 @@ export async function verifyAccessToken(
         ? await jwtVerify(token, publicKey, options)
         : await jwtVerify(token, publicKey, options);
 
-    if (protectedHeader.typ !== "at+jwt") {
+    if (protectedHeader.typ !== "at+jwt" && protectedHeader.typ !== "application/at+jwt") {
         throw new Error("Invalid access token typ");
     }
 

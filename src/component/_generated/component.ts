@@ -86,6 +86,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         {
+          authTime?: number;
           clientId: string;
           codeChallenge: string;
           codeChallengeMethod: string;
@@ -110,6 +111,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         {
           accessToken: string;
+          audience?: string;
           clientId: string;
           expiresAt: number;
           oldRefreshToken: string;
@@ -127,6 +129,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         {
           accessToken: string;
+          audience?: string;
           authorizationCode?: string;
           clientId: string;
           expiresAt: number;
@@ -149,7 +152,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       upsertAuthorization: FunctionReference<
         "mutation",
         "internal",
-        { clientId: string; scopes: Array<string>; userId: string },
+        {
+          clientId: string;
+          resource?: string;
+          scopes: Array<string>;
+          userId: string;
+        },
         any,
         Name
       >;

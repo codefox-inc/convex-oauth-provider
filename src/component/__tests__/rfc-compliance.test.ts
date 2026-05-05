@@ -540,7 +540,7 @@ describe("OAuth 2.1 RFC Compliance", () => {
       expect(true).toBe(true); // Placeholder - verify no password grant implementation
     });
 
-    test("RFC 6749 4.1.3: redirect_uri REQUIRED if included in authorization request", async () => {
+    test("OAuth 2.1: redirect_uri is optional at token endpoint and validated only when supplied", async () => {
       const t = convexTest(schema, modules);
 
       const client = await t.mutation(api.clientManagement.registerClient, {
@@ -559,15 +559,14 @@ describe("OAuth 2.1 RFC Compliance", () => {
         codeChallengeMethod: "S256",
       });
 
-      // redirect_uri省略時はエラー
-      await expect(
-        t.mutation(api.mutations.consumeAuthCode, {
-          code: authCode,
-          clientId: client.clientId,
-          codeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
-          // redirect_uriを省略
-        })
-      ).rejects.toThrow("redirect_uri_required");
+      // redirect_uri 省略時も許可
+      const omittedRedirectData = await t.mutation(api.mutations.consumeAuthCode, {
+        code: authCode,
+        clientId: client.clientId,
+        codeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      });
+
+      expect(omittedRedirectData.userId).toBeDefined();
 
       // redirect_uri付きなら成功
       const authCode2 = await t.mutation(api.mutations.issueAuthorizationCode, {

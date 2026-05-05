@@ -18,6 +18,7 @@ function ConsentForm() {
   const codeChallenge = searchParams.get("code_challenge");
   const codeChallengeMethod = searchParams.get("code_challenge_method");
   const nonce = searchParams.get("nonce");
+  const resource = searchParams.get("resource");
   const approveAuth = useMutation(api.oauth.issueAuthorizationCode);
 
   // Validate required params
@@ -49,6 +50,7 @@ function ConsentForm() {
         codeChallenge: codeChallenge || undefined,
         codeChallengeMethod: codeChallengeMethod || undefined,
         nonce: nonce || undefined,
+        resource: resource || undefined,
         state: state || undefined,
       });
 
@@ -92,6 +94,15 @@ function ConsentForm() {
             {scope ? scope.split(" ").map((s) => <li key={s}>{s}</li>) : <li>openid</li>}
           </ul>
         </div>
+
+        {resource && (
+          <div className="consent-scopes">
+            <p>Resource requested</p>
+            <ul>
+              <li>{resource}</li>
+            </ul>
+          </div>
+        )}
 
         <div className="consent-actions">
           <button onClick={handleDeny} disabled={isSubmitting}>

@@ -48,6 +48,7 @@ export default defineSchema({
         codeChallengeMethod: v.string(), // "S256" or "plain"
         nonce: v.optional(v.string()), // OIDC Nonce
         resource: v.optional(v.string()),
+        authTime: v.optional(v.number()), // OIDC auth_time (seconds since epoch)
 
         expiresAt: v.number(), // Usually 10 minutes
         usedAt: v.optional(v.number()), // RFC Line 1136: Track code usage for replay detection
@@ -72,6 +73,7 @@ export default defineSchema({
         // RFC Line 1136: Track which authorization code issued this token for replay detection
         authorizationCode: v.optional(v.string()), // Hashed authorization code
         resource: v.optional(v.string()),
+        audience: v.optional(v.string()),
     })
         .index("by_access_token", ["accessToken"])
         .index("by_refresh_token", ["refreshToken"])
@@ -88,6 +90,7 @@ export default defineSchema({
 
         // Authorized scopes
         scopes: v.array(v.string()),
+        resource: v.optional(v.string()),
 
         // When the user first authorized this client
         authorizedAt: v.number(),
