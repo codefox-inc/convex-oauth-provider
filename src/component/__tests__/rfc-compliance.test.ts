@@ -351,6 +351,60 @@ describe("OAuth 2.1 RFC Compliance", () => {
       });
       expect(authCode2).toBeDefined();
     });
+
+    test("MUST only allow port variance for loopback redirect URIs", async () => {
+      const t = convexTest(schema, modules);
+
+      const client = await t.mutation(api.clientManagement.registerClient, {
+        name: "Native App Strict Loopback",
+        type: "public",
+        redirectUris: ["http://127.0.0.1/callback?flow=oauth"],
+        scopes: ["openid"],
+      });
+
+      const authCode = await t.mutation(api.mutations.issueAuthorizationCode, {
+        userId: "user123",
+        clientId: client.clientId,
+        scopes: ["openid"],
+        redirectUri: "http://127.0.0.1:8080/callback?flow=oauth",
+        codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        codeChallengeMethod: "S256",
+      });
+      expect(authCode).toBeDefined();
+
+      await expect(
+        t.mutation(api.mutations.issueAuthorizationCode, {
+          userId: "user123",
+          clientId: client.clientId,
+          scopes: ["openid"],
+          redirectUri: "https://127.0.0.1:8080/callback?flow=oauth",
+          codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          codeChallengeMethod: "S256",
+        })
+      ).rejects.toThrow(/redirect/i);
+
+      await expect(
+        t.mutation(api.mutations.issueAuthorizationCode, {
+          userId: "user123",
+          clientId: client.clientId,
+          scopes: ["openid"],
+          redirectUri: "http://127.0.0.1:8080/different?flow=oauth",
+          codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          codeChallengeMethod: "S256",
+        })
+      ).rejects.toThrow(/redirect/i);
+
+      await expect(
+        t.mutation(api.mutations.issueAuthorizationCode, {
+          userId: "user123",
+          clientId: client.clientId,
+          scopes: ["openid"],
+          redirectUri: "http://127.0.0.1:8080/callback?flow=other",
+          codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          codeChallengeMethod: "S256",
+        })
+      ).rejects.toThrow(/redirect/i);
+    });
   });
 
   describe("Section 3.2.3 - Token Response", () => {
@@ -740,6 +794,19 @@ describe("OAuth 2.1 RFC Compliance", () => {
       });
 
       expect(tokensAfter.length).toBe(0); // All tokens should be deleted
+
+      await expect(
+        t.mutation(api.mutations.saveTokens, {
+          accessToken: "replayed-access-token",
+          refreshToken: "replayed-refresh-token",
+          clientId: client.clientId,
+          userId: "user123",
+          scopes: ["openid", "profile"],
+          expiresAt: Date.now() + 3600000,
+          refreshTokenExpiresAt: Date.now() + 2592000000,
+          authorizationCode: codeData.codeHash,
+        })
+      ).rejects.toThrow("authorization_code_reuse_detected");
     });
 
     test("RFC Line 1136: Single use enforcement - code is marked as used", async () => {

@@ -6,6 +6,7 @@ import { createMcpServer } from '../mcp/server'
 
 type Bindings = {
   CONVEX_URL?: string;
+  MCP_RESOURCE?: string;
 }
 
 const mcpRoutes = new Hono<{ Bindings: Bindings }>()
@@ -16,7 +17,53 @@ function extractToken(c: Context): string | null {
   if (authHeader?.startsWith('Bearer ')) {
     return authHeader.substring(7)
   }
-  return c.req.query('token') || null
+  return null
+}
+
+function getCanonicalMcpResource(c: Context<{ Bindings: Bindings }>): string {
+  return c.env?.MCP_RESOURCE || `${new URL(c.req.url).origin}/mcp`
+}
+
+function getProtectedResourceMetadataUrl(c: Context<{ Bindings: Bindings }>): string {
+  return `${new URL(c.req.url).origin}/.well-known/oauth-protected-resource/mcp`
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const [, payload] = token.split('.')
+  if (!payload) {
+    return null
+  }
+
+  try {
+    const normalized = payload.replaceAll('-', '+').replaceAll('_', '/')
+    const padded = normalized.padEnd(
+      normalized.length + ((4 - (normalized.length % 4)) % 4),
+      '='
+    )
+    const decoded = atob(padded)
+    const parsed: unknown = JSON.parse(decoded)
+    return parsed && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+function hasExpectedAudience(token: string, expectedAudience: string): boolean {
+  const payload = decodeJwtPayload(token)
+  if (!payload) {
+    return false
+  }
+
+  const { aud } = payload
+  if (typeof aud === 'string') {
+    return aud === expectedAudience
+  }
+  if (Array.isArray(aud)) {
+    return aud.includes(expectedAudience)
+  }
+  return false
 }
 
 // Helper: Get Convex URL
@@ -34,8 +81,17 @@ function getConvexUrl(env: Bindings): string | null {
 mcpRoutes.all('/', async (c) => {
   const token = extractToken(c)
   if (!token) {
-    c.header('WWW-Authenticate', 'Bearer realm="mcp"')
+    c.header(
+      'WWW-Authenticate',
+      `Bearer realm="mcp", resource_metadata="${getProtectedResourceMetadataUrl(c)}"`
+    )
     return c.json({ error: 'Missing authentication token' }, 401)
+  }
+
+  // This example keeps signature verification delegated to Convex. The audience
+  // check is a resource-server guard before forwarding the bearer token.
+  if (!hasExpectedAudience(token, getCanonicalMcpResource(c))) {
+    return c.json({ error: 'Invalid token audience' }, 401)
   }
 
   // Setup Convex Client

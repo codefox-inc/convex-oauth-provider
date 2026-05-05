@@ -1450,7 +1450,7 @@ describe("OAuth 2.1 Flow", () => {
             method: "POST",
             body: JSON.stringify({
                 redirect_uris: ["https://cb"],
-                token_endpoint_auth_method: "client_secret_basic",
+                token_endpoint_auth_method: "private_key_jwt",
             }),
             headers: { "Content-Type": "application/json" },
         });

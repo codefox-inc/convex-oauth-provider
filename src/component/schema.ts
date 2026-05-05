@@ -45,6 +45,7 @@ export default defineSchema({
 
         expiresAt: v.number(), // Usually 10 minutes
         usedAt: v.optional(v.number()), // RFC Line 1136: Track code usage for replay detection
+        replayDetectedAt: v.optional(v.number()), // Tombstone marker to reject late token saves
     }).index("by_code", ["code"]),
 
     /**

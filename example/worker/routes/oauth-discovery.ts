@@ -30,6 +30,10 @@ function getAppUrl(env: Bindings, requestUrl: string): string {
   return env.SITE_URL || process.env.SITE_URL || new URL(requestUrl).origin
 }
 
+function joinUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/$/, '')}${path}`
+}
+
 // Helper: Generate OAuth discovery response
 function getOAuthDiscoveryResponse(env: Bindings, requestUrl: string) {
   const convexSiteUrl = getConvexSiteUrl(env)
@@ -125,6 +129,10 @@ oauthDiscoveryRoutes.get('/.well-known/oauth-protected-resource/*', (c) => {
   const convexSiteUrl = getConvexSiteUrl(c.env)
   const appUrl = getAppUrl(c.env, c.req.url)
   const prefix = c.env.OAUTH_PREFIX || process.env.OAUTH_PREFIX || "/oauth"
+  const resourcePath = new URL(c.req.url).pathname.replace(
+    '/.well-known/oauth-protected-resource',
+    ''
+  )
 
   if (!convexSiteUrl) {
     return c.json(
@@ -134,7 +142,7 @@ oauthDiscoveryRoutes.get('/.well-known/oauth-protected-resource/*', (c) => {
   }
 
   return c.json({
-    resource: appUrl,
+    resource: joinUrl(appUrl, resourcePath),
     authorization_servers: [`${convexSiteUrl}${prefix}`],
     scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
   })

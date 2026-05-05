@@ -43,10 +43,12 @@ export function matchRedirectUri(requested: string, registered: string[]): boole
       for (const regUri of registered) {
         if (isLoopbackRedirectUri(regUri)) {
           const regUrl = new URL(regUri);
-          // ホストとパスが一致すればポート違いを許容
+          // loopback 例外は port の差分だけを許容する
           if (
+            reqUrl.protocol === regUrl.protocol &&
             reqUrl.hostname === regUrl.hostname &&
-            reqUrl.pathname === regUrl.pathname
+            reqUrl.pathname === regUrl.pathname &&
+            reqUrl.search === regUrl.search
           ) {
             return true;
           }
@@ -178,8 +180,7 @@ export const consumeAuthCode = mutation({
                 await ctx.db.delete(token._id);
             }
 
-            // Delete the code
-            await ctx.db.delete(authCode._id);
+            await ctx.db.patch(authCode._id, { replayDetectedAt: Date.now() });
 
             // Return error status (cannot throw because it would rollback token deletion)
             return {
@@ -264,6 +265,18 @@ export const saveTokens = mutation({
         authorizationCode: v.optional(v.string()), // Hashed code for replay detection (RFC Line 1136)
     },
     handler: async (ctx, args) => {
+        const authorizationCode = args.authorizationCode;
+        if (authorizationCode) {
+            const authCode = await ctx.db
+                .query("oauthCodes")
+                .withIndex("by_code", (q) => q.eq("code", authorizationCode))
+                .unique();
+
+            if (authCode?.replayDetectedAt !== undefined) {
+                throw new Error("authorization_code_reuse_detected");
+            }
+        }
+
         // Hash tokens before storing for security
         // The original tokens are returned to the client, hashes are stored
         await ctx.db.insert("oauthTokens", {
