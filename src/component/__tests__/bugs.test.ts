@@ -10,10 +10,10 @@ import { convexTest } from "convex-test";
 import { isLoopbackRedirectUri, matchRedirectUri } from "../mutations";
 import schema from "../schema";
 import { api, internal } from "../_generated/api";
-import { getJWKS, getIssuerUrl } from "../../lib/oauth";
+import { getJWKS, getIssuerUrl, getSigningKeyId } from "../../lib/oauth";
 import { hashToken } from "../token_security";
 import { decodeJwt, exportJWK, exportPKCS8, generateKeyPair } from "jose";
-import { tokenHandler, userInfoHandler, registerHandler, authorizeHandler, type OAuthComponentAPI } from "../handlers";
+import { tokenHandler, userInfoHandler, registerHandler, authorizeHandler, openIdConfigurationHandler, type OAuthComponentAPI } from "../handlers";
 import type { OAuthConfig } from "../../lib/oauth";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -792,6 +792,184 @@ describe("Bug 20: tokenHandler returns unsupported_grant_type for a missing gran
         expect(response.status).toBe(400);
         const body = await response.json();
         expect(body.error).toBe("invalid_request");
+    });
+});
+
+describe("Bug 21: api.queries.getClient leaks the bcrypt-hashed clientSecret", () => {
+    // `listClients` carefully strips `clientSecret` before returning, but the
+    // companion `getClient` query returns the raw `oauthClients` row — including
+    // the bcrypt hash. Hosts that wire this query up to the frontend (the SDK
+    // exposes it directly via `OAuthProvider.getClient`) ship the hash to the
+    // browser. The hash is bcrypt(10) so it's not catastrophic, but it leaks
+    // information about secret strength and lets a determined attacker mount an
+    // offline bcrypt attack while only being able to interact with the consent
+    // page.
+    test("getClient response must not include the stored clientSecret", async () => {
+        const t = convexTest(schema, modules);
+
+        const result = await t.mutation(api.clientManagement.registerClient, {
+            name: "Leaky Client",
+            type: "confidential",
+            redirectUris: ["https://cb"],
+            scopes: ["openid"],
+        });
+
+        const client = await t.query(api.queries.getClient, {
+            clientId: result.clientId,
+        });
+
+        expect(client).not.toBeNull();
+        // The hashed secret must not be exposed through the read API; `listClients`
+        // already strips it for the very same reason.
+        expect((client as any)?.clientSecret).toBeUndefined();
+    });
+});
+
+describe("Bug 22: authorizeHandler does not honor prompt=none semantics (returns access_denied instead of login_required/consent_required)", () => {
+    // OIDC Core §3.1.2.1 defines:
+    //   * login_required   — prompt=none AND end-user not authenticated
+    //   * consent_required — prompt=none AND end-user authenticated but consent missing
+    //   * interaction_required — generic interaction-required fallback
+    // The handler returns the catch-all `access_denied` in both cases instead.
+    // Relying-party SDKs that follow the spec (Auth0, NextAuth, openid-client) use
+    // these specific error codes to distinguish "show login" from "show consent"
+    // from "user refused". With access_denied, they cannot tell the difference.
+    test("prompt=none without authenticated user must redirect with error=login_required", async () => {
+        const response = await authorizeHandler(
+            {} as any,
+            new Request(
+                "https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&prompt=none&consent=approve",
+                {
+                    method: "GET",
+                    headers: { Origin: "https://example.com" },
+                },
+            ),
+            {
+                ...(await makeJwtConfig()),
+                getUserId: async () => null, // not authenticated
+            },
+            makeApi({
+                queries: {
+                    getClient: async (_ctx: any, { clientId }: { clientId: string }) => ({
+                        clientId,
+                        type: "public" as const,
+                        redirectUris: ["https://cb"],
+                        allowedScopes: ["openid"],
+                        tokenEndpointAuthMethod: "none" as const,
+                    }),
+                } as any,
+            }),
+        );
+
+        expect(response.status).toBe(302);
+        const redirect = new URL(response.headers.get("Location") as string);
+        expect(redirect.searchParams.get("error")).toBe("login_required");
+    });
+});
+
+describe("Bug 23: getSigningKeyId trusts config.keyId without checking the JWKS, producing JWTs that cannot be verified", () => {
+    // `getSigningKeyId` returns `config.keyId` verbatim when it is set.
+    // `getJWKS` keeps each key's existing `kid` unchanged. If those two
+    // sources disagree (config says "xyz", JWKS publishes "abc"), every
+    // freshly minted JWT carries `kid: "xyz"`, but the JWKS endpoint only
+    // advertises `kid: "abc"`. A standards-conformant verifier looks up by
+    // `kid` and rejects the token — the provider becomes a write-only key
+    // factory.
+    test("getSigningKeyId must refuse a keyId that isn't actually published in the JWKS", () => {
+        const config: OAuthConfig = {
+            privateKey: "",
+            jwks: JSON.stringify({
+                keys: [{ kty: "RSA", n: "abc", e: "AQAB", kid: "published-key" }],
+            }),
+            siteUrl: "https://example.com",
+            keyId: "config-says-something-else", // mismatch with JWKS
+        };
+        // Either getSigningKeyId throws, OR it returns the published kid.
+        // Today it returns "config-says-something-else" — guaranteed verification failure downstream.
+        expect(() => {
+            const kid = getSigningKeyId(config);
+            if (kid === "config-says-something-else") {
+                throw new Error(
+                    "getSigningKeyId returned a keyId that isn't in the JWKS",
+                );
+            }
+        }).not.toThrow();
+    });
+});
+
+describe("Bug 24: refresh_token grant leaks token state via resource/expiry errors before validating client ownership", () => {
+    // Order of checks inside `tokenHandler`'s refresh-token branch:
+    //   1. Token exists?               (returns "invalid_grant: Invalid refresh token")
+    //   2. Resource binding matches?   (returns "invalid_target")
+    //   3. Expiry not reached?         (returns "invalid_grant: Refresh token expired")
+    //   4. clientId matches oldToken?  (returns "invalid_grant: Client mismatch")
+    //
+    // An attacker who *steals* a refresh token but doesn't know the originating
+    // client can authenticate as a different (own) client and probe the token's
+    // state by varying the `resource` parameter:
+    //   - "invalid_target" → the token IS bound to a specific resource (≠ what I sent)
+    //   - "invalid_grant: Client mismatch" → token has no resource binding
+    //   - "invalid_grant: Refresh token expired" → token is past its expiry window
+    // The right ordering is to validate `oldToken.clientId === clientId` FIRST and
+    // surface a uniform "invalid_grant" for everything else.
+    test("refresh_token grant must surface a uniform invalid_grant when clientId does not match oldToken", async () => {
+        const jwtConfig = await makeJwtConfig();
+
+        const response = await tokenHandler(
+            {} as any,
+            new Request("https://example.com/oauth/token", {
+                method: "POST",
+                body: new URLSearchParams({
+                    grant_type: "refresh_token",
+                    client_id: "attacker-client",
+                    refresh_token: "stolen",
+                    client_secret: "attacker-secret",
+                    resource: "https://api.attacker.com/anything",
+                }),
+            }),
+            jwtConfig,
+            makeApi({
+                queries: {
+                    // Token belongs to a different client, but the attacker authenticated as their own client.
+                    getRefreshToken: async () => ({
+                        clientId: "victim-client",
+                        userId: "victim-user",
+                        scopes: ["openid", "offline_access"],
+                        refreshTokenExpiresAt: Date.now() + 3_600_000,
+                        resource: "https://api.victim.com/private", // bound to a different resource
+                    }) as any,
+                } as any,
+            }),
+        );
+
+        const body = await response.json();
+        // Today the attacker learns "invalid_target" (so they know the token is resource-bound)
+        // BEFORE the clientId mismatch is ever checked.
+        expect(body.error).toBe("invalid_grant");
+    });
+});
+
+describe("Bug 25: OIDC discovery omits request_uri_parameter_supported, leaving its spec-defined default (=true) lying about behavior", () => {
+    // OIDC Discovery 1.0 §3 lists the parameter defaults:
+    //   request_uri_parameter_supported  default true
+    //   request_parameter_supported      default false
+    //   claims_parameter_supported       default false
+    //
+    // Our implementation does NOT process `request_uri` — \`authorizeHandler\` simply
+    // ignores any \`request_uri=…\` query parameter. But the discovery response omits
+    // `request_uri_parameter_supported`, so spec-conformant clients (OIDC certified
+    // SDKs) read the default (true) and believe we honor it. They then send a
+    // \`request_uri\` reference that we silently drop, taking them off the documented
+    // request-object path with no warning.
+    test("discovery response must explicitly publish request_uri_parameter_supported=false (or implement the parameter)", async () => {
+        const response = await openIdConfigurationHandler(
+            {} as any,
+            new Request("https://example.com/.well-known/openid-configuration"),
+            await makeJwtConfig(),
+        );
+
+        const body = await response.json();
+        expect(body.request_uri_parameter_supported).toBe(false);
     });
 });
 
