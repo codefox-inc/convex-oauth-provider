@@ -72,8 +72,11 @@ export default defineSchema({
 
         // RFC Line 1136: Track which authorization code issued this token for replay detection
         authorizationCode: v.optional(v.string()), // Hashed authorization code
+        refreshTokenFamilyId: v.optional(v.string()),
+        refreshTokenRotatedAt: v.optional(v.number()),
         resource: v.optional(v.string()),
         audience: v.optional(v.string()),
+        authTime: v.optional(v.number()),
     })
         .index("by_access_token", ["accessToken"])
         .index("by_refresh_token", ["refreshToken"])

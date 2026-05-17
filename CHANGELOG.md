@@ -1,5 +1,35 @@
 # @codefox-inc/oauth-provider
 
+## 0.4.2
+
+### Patch Changes
+
+- b280a4d: Fix several OAuth/OIDC compliance and security issues in the
+  authorization, token, discovery, and userinfo flows.
+  - Detect refresh-token reuse during rotation and revoke the full refresh-token
+    family plus the stored authorization record.
+  - Revoke stored authorizations when authorization-code replay is detected, so
+    resource servers that check authorization records can reject already-issued
+    access tokens.
+  - Preserve used authorization-code tombstones while descendant refresh tokens
+    are still valid, keeping replay detection effective across refresh-token
+    rotations.
+  - Honor OIDC `prompt=none` semantics by returning `login_required` or
+    `consent_required` when needed, and by allowing silent success when existing
+    consent already covers the requested scopes and resource.
+  - Tighten token endpoint validation for conflicting client authentication,
+    missing `grant_type`, refresh-token client ownership, refresh-token resource
+    binding, and refresh-token scope preservation.
+  - Improve protocol metadata and response behavior for discovery, userinfo,
+    redirect URI handling, client-secret verification, and JWKS key selection.
+
+  After upgrading, regenerate Convex component references and ensure resource
+  servers wire authorization checks if they need revocation to affect
+  already-issued JWT access tokens before `exp`. Newly issued client secrets now
+  fit within bcrypt's 72-byte input limit; existing longer secrets remain
+  accepted for patch-release compatibility and should be rotated when practical
+  to fully remove bcrypt truncation exposure.
+
 ## 0.4.1
 
 ### Patch Changes

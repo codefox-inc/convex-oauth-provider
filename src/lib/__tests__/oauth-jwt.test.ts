@@ -402,7 +402,7 @@ describe("OAuth JWT and Utilities", () => {
                 privateKey: TEST_PRIVATE_KEY,
                 keyId: "override-key"
             };
-            expect(getSigningKeyId(configWithOverride)).toBe("override-key");
+            expect(() => getSigningKeyId(configWithOverride)).toThrow(/not present in JWKS/);
 
             const configWithMissingKid: OAuthConfig = {
                 siteUrl: "https://example.com",

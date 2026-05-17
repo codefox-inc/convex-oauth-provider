@@ -135,6 +135,8 @@ export async function getJWKS(config: OAuthConfig): Promise<{ keys: JoseJWK[] }>
         return {
             ...publicKey,
             kid: publicKey.kid ?? keyId,
+            use: publicKey.use ?? "sig",
+            alg: publicKey.alg ?? "RS256",
         };
     });
 
@@ -145,13 +147,29 @@ function ensureKidOnJwksKeys(keys: JoseJWK[], keyId: string): JoseJWK[] {
     return keys.map((key) => ({
         ...key,
         kid: key.kid ?? keyId,
+        use: key.use ?? "sig",
+        alg: key.alg ?? "RS256",
     }));
 }
 
 export function getSigningKeyId(config: OAuthConfig): string {
-    if (config.keyId) return config.keyId;
+    let jwks: { keys?: JoseJWK[] };
     try {
-        const jwks = JSON.parse(config.jwks) as { keys?: JoseJWK[] };
+        jwks = JSON.parse(config.jwks) as { keys?: JoseJWK[] };
+    } catch {
+        return config.keyId ?? DEFAULT_KEY_ID;
+    }
+
+    if (config.keyId) {
+        const hasExplicitKids = jwks.keys?.some((key) => typeof key.kid === "string" && key.kid.length > 0) ?? false;
+        const publishesKeyId = jwks.keys?.some((key) => key.kid === config.keyId) ?? false;
+        if (hasExplicitKids && !publishesKeyId) {
+            throw new Error(`Configured keyId "${config.keyId}" is not present in JWKS`);
+        }
+        return config.keyId;
+    }
+
+    try {
         const kid = jwks.keys?.[0]?.kid;
         if (typeof kid === "string" && kid.length > 0) {
             return kid;
@@ -223,16 +241,18 @@ export async function verifyAccessToken(
 async function getVerificationKey(
     config: OAuthConfig
 ): Promise<ReturnType<typeof createLocalJWKSet>> {
-    const cached = jwksKeyCache.get(config.jwks);
+    const keyId = getSigningKeyId(config);
+    const cacheKey = `${config.jwks}:${keyId}`;
+    const cached = jwksKeyCache.get(cacheKey);
     if (cached) return cached;
 
     const jwks = JSON.parse(config.jwks) as { keys: JoseJWK[] };
     if (!jwks.keys?.length) {
         throw new Error("jwks must include at least one key");
     }
-    const normalized = { keys: ensureKidOnJwksKeys(jwks.keys, getSigningKeyId(config)) };
+    const normalized = { keys: ensureKidOnJwksKeys(jwks.keys, keyId) };
     const localJwks = createLocalJWKSet(normalized);
-    jwksKeyCache.set(config.jwks, localJwks);
+    jwksKeyCache.set(cacheKey, localJwks);
     return localJwks;
 }
 
@@ -254,16 +274,16 @@ export function generateCode(length = 32): string {
  * Generate a cryptographically strong Client Secret (hex string)
  */
 export function generateClientSecret(length = 64): string {
-    const array = new Uint8Array(length);
+    const array = new Uint8Array(Math.ceil(length / 2));
     crypto.getRandomValues(array);
-    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('').slice(0, length);
 }
 
 /**
  * Get Issuer URL helper
  */
 export function getIssuerUrl(config: OAuthConfig): string {
-    const issuerBaseUrl = config.convexSiteUrl ?? config.siteUrl;
+    const issuerBaseUrl = (config.convexSiteUrl ?? config.siteUrl).replace(/\/+$/, "");
     const prefix = normalizePrefix(config.prefix);
     return issuerBaseUrl + prefix;
 }

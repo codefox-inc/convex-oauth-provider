@@ -10,7 +10,7 @@ import { convexTest } from "convex-test";
 import { isLoopbackRedirectUri, matchRedirectUri } from "../mutations";
 import schema from "../schema";
 import { api, internal } from "../_generated/api";
-import { getJWKS, getIssuerUrl, getSigningKeyId } from "../../lib/oauth";
+import { generateClientSecret, getJWKS, getIssuerUrl, getSigningKeyId } from "../../lib/oauth";
 import { hashToken } from "../token_security";
 import { decodeJwt, exportJWK, exportPKCS8, generateKeyPair } from "jose";
 import { tokenHandler, userInfoHandler, registerHandler, authorizeHandler, openIdConfigurationHandler, type OAuthComponentAPI } from "../handlers";
@@ -19,7 +19,6 @@ import type { OAuthConfig } from "../../lib/oauth";
 const modules = import.meta.glob("../**/*.ts");
 
 const validCodeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-const validCodeVerifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
 describe("Bug 1: isLoopbackRedirectUri ignores RFC-compliant IPv6 loopback URIs with brackets", () => {
     // `URL.hostname` returns "[::1]" for IPv6 loopback URIs (per WHATWG URL spec).
@@ -295,17 +294,19 @@ describe("Bug 8: bcrypt truncates the 128-char client secret at 72 bytes, so hal
     // verification. Two secrets that match in the first 72 chars are
     // indistinguishable — i.e. the system claims 64 random bytes of entropy but only
     // protects 36.
-    test("verifyClientSecret must reject a tampered secret that matches only on the first 72 chars", async () => {
+    test("generated client secrets must fit within bcrypt's 72-byte input limit", () => {
+        expect(generateClientSecret(64)).toHaveLength(64);
+    });
+
+    test("verifyClientSecret must keep accepting existing long secrets for patch-release compatibility", async () => {
         const t = convexTest(schema, modules);
         const bcrypt = await import("bcryptjs");
 
-        const real = "a".repeat(72) + "X".repeat(56); // 128 chars (same shape as generated secrets)
-        const tampered = "a".repeat(72) + "Y".repeat(56);
-
+        const real = "a".repeat(128);
         await t.run(async (ctx) => {
             await ctx.db.insert("oauthClients", {
-                name: "Truncation Client",
-                clientId: "trunc-client",
+                name: "Legacy Long Secret Client",
+                clientId: "legacy-long-secret-client",
                 clientSecret: bcrypt.hashSync(real, 4),
                 type: "confidential",
                 redirectUris: ["https://cb"],
@@ -315,16 +316,34 @@ describe("Bug 8: bcrypt truncates the 128-char client secret at 72 bytes, so hal
             });
         });
 
+        await expect(
+            t.mutation(api.clientManagement.verifyClientSecret, {
+                clientId: "legacy-long-secret-client",
+                clientSecret: real,
+            }),
+        ).resolves.toBe(true);
+    });
+
+    test("verifyClientSecret must reject a tampered generated secret", async () => {
+        const t = convexTest(schema, modules);
+
+        const result = await t.mutation(api.clientManagement.registerClient, {
+            name: "Truncation Client",
+            type: "confidential",
+            redirectUris: ["https://cb"],
+            scopes: ["openid"],
+        });
+        const real = result.clientSecret as string;
+        const tampered = real.slice(0, -1) + (real.charAt(real.length - 1) === "0" ? "1" : "0");
+
         const realOk = await t.mutation(api.clientManagement.verifyClientSecret, {
-            clientId: "trunc-client",
+            clientId: result.clientId,
             clientSecret: real,
         });
         expect(realOk).toBe(true);
 
-        // Tampered secret should NOT authenticate, but it does because bcrypt only
-        // saw the first 72 chars on both sides.
         const tamperedOk = await t.mutation(api.clientManagement.verifyClientSecret, {
-            clientId: "trunc-client",
+            clientId: result.clientId,
             clientSecret: tampered,
         });
         expect(tamperedOk).toBe(false);
@@ -884,16 +903,7 @@ describe("Bug 23: getSigningKeyId trusts config.keyId without checking the JWKS,
             siteUrl: "https://example.com",
             keyId: "config-says-something-else", // mismatch with JWKS
         };
-        // Either getSigningKeyId throws, OR it returns the published kid.
-        // Today it returns "config-says-something-else" — guaranteed verification failure downstream.
-        expect(() => {
-            const kid = getSigningKeyId(config);
-            if (kid === "config-says-something-else") {
-                throw new Error(
-                    "getSigningKeyId returned a keyId that isn't in the JWKS",
-                );
-            }
-        }).not.toThrow();
+        expect(() => getSigningKeyId(config)).toThrow(/not present in JWKS/);
     });
 });
 

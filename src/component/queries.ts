@@ -8,10 +8,15 @@ import { hashToken, isHashedToken } from "./token_security.js";
 export const getClient = query({
     args: { clientId: v.string() },
     handler: async (ctx, args) => {
-        return await ctx.db
+        const client = await ctx.db
             .query("oauthClients")
             .withIndex("by_client_id", (q) => q.eq("clientId", args.clientId))
             .unique();
+        if (!client) return null;
+        return {
+            ...client,
+            clientSecret: undefined,
+        };
     },
 });
 

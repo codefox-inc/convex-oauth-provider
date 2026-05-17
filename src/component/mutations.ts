@@ -21,6 +21,7 @@ export function isLoopbackRedirectUri(uri: string): boolean {
     return (
       parsed.hostname === "127.0.0.1" ||
       parsed.hostname === "::1" ||
+      parsed.hostname === "[::1]" ||
       parsed.hostname === "localhost"
     );
   } catch {
@@ -49,12 +50,50 @@ function validateResourceUri(resource: string | undefined): void {
     }
 }
 
+async function revokeTokenFamily(ctx: any, token: {
+    clientId: string;
+    userId: string;
+    authorizationCode?: string;
+    refreshTokenFamilyId?: string;
+}) {
+    const tokens = await ctx.db
+        .query("oauthTokens")
+        .withIndex("by_user", (q: any) => q.eq("userId", token.userId))
+        .collect();
+    const toDelete = tokens.filter((candidate: any) =>
+        candidate.clientId === token.clientId &&
+        (
+            (token.refreshTokenFamilyId !== undefined && candidate.refreshTokenFamilyId === token.refreshTokenFamilyId) ||
+            (token.authorizationCode !== undefined && candidate.authorizationCode === token.authorizationCode)
+        )
+    );
+
+    for (const candidate of toDelete) {
+        await ctx.db.delete(candidate._id);
+    }
+
+    const authorization = await ctx.db
+        .query("oauthAuthorizations")
+        .withIndex("by_user_client", (q: any) =>
+            q.eq("userId", token.userId).eq("clientId", token.clientId)
+        )
+        .unique();
+    if (authorization) {
+        await ctx.db.delete(authorization._id);
+    }
+
+    return {
+        revokedTokens: toDelete.length,
+        authorizationDeleted: authorization !== null,
+    };
+}
+
 async function verifyPkce(
     codeChallengeMethod: string,
     codeChallenge: string,
     codeVerifier: string
 ) {
-    if (codeChallengeMethod !== "S256" && codeChallengeMethod !== "plain") {
+    if (codeChallengeMethod !== "S256") {
         throw new Error("unsupported_code_challenge_method");
     }
 
@@ -75,12 +114,6 @@ async function verifyPkce(
         if (hashBase64 !== codeChallenge) {
             throw new Error("invalid_code_verifier");
         }
-    } else if (codeChallengeMethod === "plain") {
-        if (codeVerifier !== codeChallenge) {
-            throw new Error("invalid_code_verifier");
-        }
-    } else {
-        throw new Error("unsupported_code_challenge_method");
     }
 }
 
@@ -282,12 +315,23 @@ export const consumeAuthCode = mutation({
                 await ctx.db.delete(token._id);
             }
 
+            const authorization = await ctx.db
+                .query("oauthAuthorizations")
+                .withIndex("by_user_client", (q) =>
+                    q.eq("userId", authCode.userId).eq("clientId", authCode.clientId)
+                )
+                .unique();
+            if (authorization) {
+                await ctx.db.delete(authorization._id);
+            }
+
             await ctx.db.patch(authCode._id, { replayDetectedAt: Date.now() });
 
             // Return error status (cannot throw because it would rollback token deletion)
             return {
                 error: "authorization_code_reuse_detected",
                 revokedTokens: tokensToRevoke.length,
+                authorizationDeleted: authorization !== null,
             } as any;
         }
 
@@ -334,6 +378,7 @@ export const saveTokens = mutation({
         authorizationCode: v.optional(v.string()), // Hashed code for replay detection (RFC Line 1136)
         resource: v.optional(v.string()),
         audience: v.optional(v.string()),
+        authTime: v.optional(v.number()),
     },
     handler: async (ctx, args) => {
         const authorizationCode = args.authorizationCode;
@@ -355,6 +400,9 @@ export const saveTokens = mutation({
             accessToken: await hashToken(args.accessToken),
             refreshToken: args.refreshToken
                 ? await hashToken(args.refreshToken)
+                : undefined,
+            refreshTokenFamilyId: args.refreshToken
+                ? (args.authorizationCode ?? crypto.randomUUID())
                 : undefined,
         });
     },
@@ -402,6 +450,14 @@ export const rotateRefreshToken = mutation({
             throw new Error("invalid_grant");
         }
 
+        if (oldToken.refreshTokenRotatedAt !== undefined) {
+            const result = await revokeTokenFamily(ctx, oldToken);
+            return {
+                error: "refresh_token_reuse_detected",
+                ...result,
+            } as any;
+        }
+
         // 2. Validate Client/User consistency
         if (oldToken.clientId !== args.clientId || oldToken.userId !== args.userId) {
             throw new Error("invalid_grant");
@@ -437,8 +493,13 @@ export const rotateRefreshToken = mutation({
             throw new Error(`invalid_scope: ${invalidScopes.join(", ")}`);
         }
 
-        // 5. Delete Old Token
-        await ctx.db.delete(oldToken._id);
+        const refreshTokenFamilyId = oldToken.refreshTokenFamilyId ?? oldToken.authorizationCode ?? crypto.randomUUID();
+
+        // 5. Keep old refresh token as a tombstone so reuse can revoke the family.
+        await ctx.db.patch(oldToken._id, {
+            refreshTokenFamilyId,
+            refreshTokenRotatedAt: Date.now(),
+        });
 
         // 6. Insert New Token (with hashed values)
         await ctx.db.insert("oauthTokens", {
@@ -451,6 +512,9 @@ export const rotateRefreshToken = mutation({
             refreshTokenExpiresAt: args.refreshTokenExpiresAt,
             resource: args.resource,
             audience: args.audience,
+            authorizationCode: oldToken.authorizationCode,
+            refreshTokenFamilyId,
+            authTime: oldToken.authTime,
         });
     },
 });
@@ -472,6 +536,30 @@ export const deleteClient = mutation({
             throw new Error("Client not found");
         }
 
+        const tokens = await ctx.db
+            .query("oauthTokens")
+            .filter((q) => q.eq(q.field("clientId"), args.clientId))
+            .collect();
+        for (const token of tokens) {
+            await ctx.db.delete(token._id);
+        }
+
+        const codes = await ctx.db
+            .query("oauthCodes")
+            .filter((q) => q.eq(q.field("clientId"), args.clientId))
+            .collect();
+        for (const code of codes) {
+            await ctx.db.delete(code._id);
+        }
+
+        const authorizations = await ctx.db
+            .query("oauthAuthorizations")
+            .filter((q) => q.eq(q.field("clientId"), args.clientId))
+            .collect();
+        for (const authorization of authorizations) {
+            await ctx.db.delete(authorization._id);
+        }
+
         await ctx.db.delete(client._id);
     },
 });
@@ -485,24 +573,65 @@ export const cleanupExpired = internalMutation({
     handler: async (ctx) => {
         const now = Date.now();
 
-        // Cleanup expired codes (both unused and used codes past retention period)
+        // Cleanup unused expired codes. Used codes are replay-detection tombstones and
+        // must outlive refresh tokens minted from the same authorization.
         const expiredCodes = await ctx.db
             .query("oauthCodes")
             .filter(q => q.lt(q.field("expiresAt"), now))
             .take(100);
 
         for (const code of expiredCodes) {
-            await ctx.db.delete(code._id);
+            const descendantTokens = await ctx.db
+                .query("oauthTokens")
+                .withIndex("by_authorization_code", (q) => q.eq("authorizationCode", code.code))
+                .collect();
+            const maxDescendantRefreshExpiry = Math.max(
+                0,
+                ...descendantTokens.map((token) => token.refreshTokenExpiresAt ?? 0)
+            );
+            const replayRetentionUntil = Math.max(
+                (code.usedAt ?? code.replayDetectedAt ?? 0) + OAUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY_MS,
+                maxDescendantRefreshExpiry
+            );
+            if (code.usedAt === undefined && code.replayDetectedAt === undefined) {
+                await ctx.db.delete(code._id);
+            } else if (replayRetentionUntil < now) {
+                await ctx.db.delete(code._id);
+            }
         }
 
-        // Cleanup expired tokens
+        // Cleanup tokens only after every credential stored in the row has expired.
         const expiredTokens = await ctx.db
             .query("oauthTokens")
             .filter(q => q.lt(q.field("expiresAt"), now))
             .take(100);
 
         for (const token of expiredTokens) {
-            await ctx.db.delete(token._id);
+            const familyTokens = token.refreshTokenFamilyId
+                ? await ctx.db
+                    .query("oauthTokens")
+                    .filter((q) =>
+                        q.and(
+                            q.eq(q.field("clientId"), token.clientId),
+                            q.eq(q.field("userId"), token.userId),
+                            q.eq(q.field("refreshTokenFamilyId"), token.refreshTokenFamilyId)
+                        )
+                    )
+                    .collect()
+                : [];
+            const maxFamilyRefreshExpiry = Math.max(
+                0,
+                ...familyTokens.map((familyToken) => familyToken.refreshTokenExpiresAt ?? 0)
+            );
+            const shouldKeepTombstone =
+                token.refreshTokenRotatedAt !== undefined &&
+                maxFamilyRefreshExpiry >= now;
+            if (
+                !shouldKeepTombstone &&
+                (!token.refreshToken || !token.refreshTokenExpiresAt || token.refreshTokenExpiresAt < now)
+            ) {
+                await ctx.db.delete(token._id);
+            }
         }
 
         return {
@@ -540,11 +669,9 @@ export const upsertAuthorization = mutation({
         const now = Date.now();
 
         if (existing) {
-            // Update: merge scopes, update lastUsedAt
-            const mergedScopes = [...new Set([...existing.scopes, ...args.scopes])];
             await ctx.db.patch(existing._id, {
-                scopes: mergedScopes,
-                resource: args.resource ?? existing.resource,
+                scopes: args.scopes,
+                resource: args.resource,
                 lastUsedAt: now,
             });
             return existing._id;
@@ -616,9 +743,24 @@ export const revokeAuthorization = mutation({
             await ctx.db.delete(token._id);
         }
 
+        // 3. Delete pending authorization codes for this user-client pair.
+        const codes = (await ctx.db
+            .query("oauthCodes")
+            .filter((q) =>
+                q.and(
+                    q.eq(q.field("userId"), args.userId),
+                    q.eq(q.field("clientId"), args.clientId)
+                )
+            )
+            .collect()).filter((code) => code.usedAt === undefined);
+        for (const code of codes) {
+            await ctx.db.delete(code._id);
+        }
+
         return {
             authorizationDeleted: !!auth,
             tokensDeleted: toDelete.length,
+            codesDeleted: codes.length,
         };
     },
 });

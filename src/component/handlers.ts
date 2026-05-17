@@ -245,14 +245,24 @@ export interface OAuthComponentAPI {
             allowedScopes: string[];
             tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
         } | null>;
+        getAuthorization?: (ctx: RunQueryCtx, args: { userId: string; clientId: string }) => Promise<{
+            userId: string;
+            clientId: string;
+            scopes: string[];
+            resource?: string;
+        } | null>;
         getRefreshToken: (ctx: RunQueryCtx, args: { refreshToken: string }) => Promise<{
             refreshToken?: string;
             clientId: string;
             userId: string;
             scopes: string[];
             refreshTokenExpiresAt?: number;
+            authorizationCode?: string;
+            refreshTokenFamilyId?: string;
+            refreshTokenRotatedAt?: number;
             resource?: string;
             audience?: string;
+            authTime?: number;
         } | null>;
         getTokensByUser: (ctx: RunQueryCtx, args: { userId: string }) => Promise<Array<{
             _id: string;
@@ -303,6 +313,7 @@ export interface OAuthComponentAPI {
             authorizationCode?: string;
             resource?: string;
             audience?: string;
+            authTime?: number;
         }) => Promise<void>;
         rotateRefreshToken: (ctx: RunMutationCtx, args: {
             oldRefreshToken: string;
@@ -315,7 +326,7 @@ export interface OAuthComponentAPI {
             refreshTokenExpiresAt: number;
             resource?: string;
             audience?: string;
-        }) => Promise<void>;
+        }) => Promise<void | { error: string; revokedTokens: number; authorizationDeleted: boolean }>;
         upsertAuthorization: (ctx: RunMutationCtx, args: {
             userId: string;
             clientId: string;
@@ -437,6 +448,15 @@ export async function authorizeHandler(
         );
     }
 
+    if (params.has("request") || params.has("request_uri")) {
+        return buildAuthorizeErrorRedirect(
+            redirectUri,
+            "invalid_request",
+            "request and request_uri parameters are not supported",
+            state
+        );
+    }
+
     if (consent === "approve" && !isConsentFromProvider(request, config)) {
         return buildAuthorizeErrorRedirect(
             redirectUri,
@@ -485,7 +505,11 @@ export async function authorizeHandler(
     let requestedScopes = scope
         ? scope.split(" ").filter(Boolean)
         : [];
-    if (requestedScopes.includes("offline_access") && !promptValues.has("consent")) {
+    if (
+        requestedScopes.includes("offline_access") &&
+        !promptValues.has("consent") &&
+        !promptValues.has("none")
+    ) {
         requestedScopes = requestedScopes.filter((s) => s !== "offline_access");
     }
     if (requestedScopes.length === 0) {
@@ -531,7 +555,52 @@ export async function authorizeHandler(
         );
     }
 
-    if (consent !== "approve") {
+    if (!config.getUserId) {
+        return new OAuthError("server_error", "getUserId is not configured", 500).toResponse(headers);
+    }
+    const userId = await config.getUserId(ctx as RunActionCtx & { auth: Auth }, request);
+
+    if (promptValues.has("none")) {
+        if (promptValues.size > 1) {
+            return buildAuthorizeErrorRedirect(
+                redirectUri,
+                "invalid_request",
+                "prompt=none cannot be combined with other prompt values",
+                state
+            );
+        }
+        if (!userId) {
+            return buildAuthorizeErrorRedirect(
+                redirectUri,
+                "login_required",
+                "User not authenticated",
+                state
+            );
+        }
+        if (consent !== "approve") {
+            if (!api.queries.getAuthorization) {
+                return buildAuthorizeErrorRedirect(
+                    redirectUri,
+                    "server_error",
+                    "OAuth component API is out of date; regenerate component API references",
+                    state
+                );
+            }
+            const authorization = await api.queries.getAuthorization(ctx, { userId, clientId });
+            const hasScopes = authorization !== null &&
+                requestedScopes.every((scope) => authorization.scopes.includes(scope));
+            const hasResource = authorization !== null &&
+                authorization.resource === (resource ?? undefined);
+            if (!hasScopes || !hasResource) {
+                return buildAuthorizeErrorRedirect(
+                    redirectUri,
+                    "consent_required",
+                    "User consent required",
+                    state
+                );
+            }
+        }
+    } else if (consent !== "approve") {
         return buildAuthorizeErrorRedirect(
             redirectUri,
             "access_denied",
@@ -540,10 +609,6 @@ export async function authorizeHandler(
         );
     }
 
-    if (!config.getUserId) {
-        return new OAuthError("server_error", "getUserId is not configured", 500).toResponse(headers);
-    }
-    const userId = await config.getUserId(ctx as RunActionCtx & { auth: Auth }, request);
     if (!userId) {
         return buildAuthorizeErrorRedirect(
             redirectUri,
@@ -586,7 +651,7 @@ export async function openIdConfigurationHandler(
     if (corsResponse) return corsResponse;
     const headers = createCorsHeaders(request.headers.get("Origin"), config, "GET, OPTIONS");
 
-    const backendUrl = config.convexSiteUrl ?? config.siteUrl;
+    const backendUrl = (config.convexSiteUrl ?? config.siteUrl).replace(/\/+$/, "");
     const prefix = normalizePrefix(config.prefix);
 
     const issuerUrl = getIssuerUrl(config);
@@ -607,6 +672,9 @@ export async function openIdConfigurationHandler(
         token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
         grant_types_supported: ["authorization_code", "refresh_token"],
         code_challenge_methods_supported: ["S256"],
+        request_uri_parameter_supported: false,
+        request_parameter_supported: false,
+        claims_parameter_supported: false,
     };
 
     if (config.allowDynamicClientRegistration) {
@@ -695,12 +763,16 @@ export async function tokenHandler(
                 throw new OAuthError("invalid_request", "Multiple client authentication methods");
             }
             const basicCredentials = parseBasicClientCredentials(authHeader);
+            if (bodyClientId && bodyClientId !== basicCredentials.clientId) {
+                throw new OAuthError("invalid_request", "Conflicting client_id");
+            }
             clientId = basicCredentials.clientId;
             clientSecret = basicCredentials.clientSecret;
             usedAuthMethod = "client_secret_basic";
         }
 
         if (!clientId) throw new OAuthError("invalid_request", "client_id required");
+        if (!grantType) throw new OAuthError("invalid_request", "grant_type required");
 
         // Client existence + confidential client check
         const client = await api.queries.getClient(ctx, { clientId });
@@ -816,6 +888,7 @@ export async function tokenHandler(
                 authorizationCode: codeData.codeHash, // Link to authorization code
                 resource: codeData.resource,
                 audience: accessTokenAudience,
+                authTime: codeData.authTime,
             });
 
             // F. Create/Update Authorization Record
@@ -858,6 +931,23 @@ export async function tokenHandler(
             const oldToken = await api.queries.getRefreshToken(ctx, { refreshToken });
 
             if (!oldToken) throw new OAuthError("invalid_grant", "Invalid refresh token");
+            if (oldToken.refreshTokenRotatedAt !== undefined) {
+                // rotateRefreshToken detects tombstones before storing the supplied replacement tokens.
+                await api.mutations.rotateRefreshToken(ctx, {
+                    oldRefreshToken: refreshToken,
+                    accessToken: "refresh-token-reuse-detected",
+                    refreshToken: "refresh-token-reuse-detected",
+                    clientId: oldToken.clientId,
+                    userId: oldToken.userId,
+                    scopes: oldToken.scopes,
+                    expiresAt: Date.now(),
+                    refreshTokenExpiresAt: Date.now(),
+                    resource: oldToken.resource,
+                    audience: oldToken.audience,
+                });
+                throw new OAuthError("invalid_grant", "Invalid refresh token");
+            }
+            if (oldToken.clientId !== clientId) throw new OAuthError("invalid_grant", "Client mismatch");
             const refreshTokenResource = oldToken.resource;
             const refreshTokenAudience = oldToken.audience ?? refreshTokenResource ?? config.applicationID ?? "convex";
             const accessTokenAudience = refreshTokenResource ?? refreshTokenAudience;
@@ -871,8 +961,6 @@ export async function tokenHandler(
             if (!oldToken.refreshTokenExpiresAt || oldToken.refreshTokenExpiresAt < Date.now()) {
                 throw new OAuthError("invalid_grant", "Refresh token expired");
             }
-
-            if (oldToken.clientId !== clientId) throw new OAuthError("invalid_grant", "Client mismatch");
 
             const userId = oldToken.userId;
 
@@ -943,6 +1031,7 @@ export async function tokenHandler(
                     sub: userId,
                     iss: issuerUrl,
                     aud: clientId,
+                    auth_time: oldToken.authTime,
                 })
                     .setProtectedHeader({ alg: "RS256", typ: "JWT", kid: keyId })
                     .setIssuedAt()
@@ -952,7 +1041,7 @@ export async function tokenHandler(
 
             // Rotate - 元のスコープ維持
             try {
-                await api.mutations.rotateRefreshToken(ctx, {
+                const rotationResult = await api.mutations.rotateRefreshToken(ctx, {
                     oldRefreshToken: refreshToken,
                     accessToken,
                     refreshToken: newRefreshToken,
@@ -964,6 +1053,9 @@ export async function tokenHandler(
                     resource: refreshTokenResource,
                     audience: refreshTokenAudience,
                 });
+                if (rotationResult && "error" in rotationResult && rotationResult.error === "refresh_token_reuse_detected") {
+                    throw new OAuthError("invalid_grant", "Invalid refresh token");
+                }
 
                 // Update authorization lastUsedAt
                 await api.mutations.updateAuthorizationLastUsed(ctx, {
@@ -1038,8 +1130,7 @@ export async function tokenHandler(
                 return new OAuthError("invalid_scope", e.message).toResponse(tokenHeaders);
             }
         }
-        const message = e instanceof Error ? e.message : String(e);
-        return new OAuthError("invalid_request", message).toResponse(tokenHeaders);
+        return new OAuthError("invalid_request", "Invalid request").toResponse(tokenHeaders);
     }
 }
 
@@ -1057,7 +1148,8 @@ export async function userInfoHandler(
     const headers = createCorsHeaders(request.headers.get("Origin"), config, "GET, POST, OPTIONS");
 
     const authHeader = request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const authMatch = authHeader?.match(/^Bearer\s+(.+)$/i);
+    if (!authMatch) {
         return new Response(null, {
             status: 401,
             headers: {
@@ -1067,7 +1159,7 @@ export async function userInfoHandler(
         });
     }
 
-    const token = authHeader.split(" ")[1];
+    const token = authMatch[1];
 
     try {
         const issuerUrl = getIssuerUrl(config);
@@ -1126,7 +1218,14 @@ export async function userInfoHandler(
             responseBody.email_verified = user.email_verified;
         }
 
-        return new Response(JSON.stringify(responseBody), { headers });
+        return new Response(JSON.stringify(responseBody), {
+            headers: {
+                ...headers,
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                "Pragma": "no-cache",
+            },
+        });
 
     } catch {
         return new Response(null, {
@@ -1257,8 +1356,7 @@ export async function registerHandler(
         if (e instanceof OAuthError) {
             return e.toResponse(headers);
         }
-        const message = e instanceof Error ? e.message : String(e);
-        return new OAuthError("invalid_request", message).toResponse(headers);
+        return new OAuthError("invalid_request", "Invalid client metadata").toResponse(headers);
     }
 }
 

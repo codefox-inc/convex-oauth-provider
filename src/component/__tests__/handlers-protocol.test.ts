@@ -109,6 +109,27 @@ describe("OAuth handler protocol checks", () => {
         expect(issueAuthorizationCode).not.toHaveBeenCalled();
     });
 
+    test("authorization endpoint rejects unsupported request object parameters", async () => {
+        const issueAuthorizationCode = vi.fn(async () => "code");
+
+        for (const parameter of ["request", "request_uri"]) {
+            const response = await authorizeHandler(
+                {} as any,
+                new Request(`https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&consent=approve&${parameter}=unsupported`, {
+                    method: "GET",
+                    headers: { Origin: "https://example.com" },
+                }),
+                { ...config, getUserId: async () => "user" },
+                makeApi({ mutations: { issueAuthorizationCode } as any })
+            );
+
+            expect(response.status).toBe(302);
+            const redirect = new URL(response.headers.get("Location") as string);
+            expect(redirect.searchParams.get("error")).toBe("invalid_request");
+        }
+        expect(issueAuthorizationCode).not.toHaveBeenCalled();
+    });
+
     test("authorization endpoint rejects code_challenge values outside PKCE ABNF", async () => {
         const issueAuthorizationCode = vi.fn(async () => "code");
 
@@ -147,6 +168,88 @@ describe("OAuth handler protocol checks", () => {
             expect.anything(),
             expect.objectContaining({ scopes: ["openid", "offline_access"] })
         );
+    });
+
+    test("authorization endpoint allows prompt=none when existing consent covers the request", async () => {
+        const issueAuthorizationCode = vi.fn(async () => "silent-code");
+
+        const response = await authorizeHandler(
+            {} as any,
+            new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20profile&prompt=none&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
+                method: "GET",
+                headers: { Origin: "https://example.com" },
+            }),
+            { ...config, getUserId: async () => "user" },
+            makeApi({
+                queries: {
+                    getAuthorization: async () => ({
+                        userId: "user",
+                        clientId: "client",
+                        scopes: ["openid", "profile", "email"],
+                    }),
+                } as any,
+                mutations: { issueAuthorizationCode } as any,
+            })
+        );
+
+        expect(response.status).toBe(302);
+        const redirect = new URL(response.headers.get("Location") as string);
+        expect(redirect.searchParams.get("code")).toBe("silent-code");
+        expect(issueAuthorizationCode).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ scopes: ["openid", "profile"] })
+        );
+    });
+
+    test("authorization endpoint preserves offline_access for prompt=none when prior consent covers it", async () => {
+        const issueAuthorizationCode = vi.fn(async () => "silent-code");
+
+        const response = await authorizeHandler(
+            {} as any,
+            new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid%20offline_access&prompt=none&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
+                method: "GET",
+                headers: { Origin: "https://example.com" },
+            }),
+            { ...config, getUserId: async () => "user" },
+            makeApi({
+                queries: {
+                    getAuthorization: async () => ({
+                        userId: "user",
+                        clientId: "client",
+                        scopes: ["openid", "offline_access"],
+                    }),
+                } as any,
+                mutations: { issueAuthorizationCode } as any,
+            })
+        );
+
+        expect(response.status).toBe(302);
+        expect(issueAuthorizationCode).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ scopes: ["openid", "offline_access"] })
+        );
+    });
+
+    test("authorization endpoint returns server_error for prompt=none when component API is missing getAuthorization", async () => {
+        const issueAuthorizationCode = vi.fn(async () => "silent-code");
+
+        const response = await authorizeHandler(
+            {} as any,
+            new Request("https://example.com/oauth/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Fcb&scope=openid&prompt=none&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256", {
+                method: "GET",
+                headers: { Origin: "https://example.com" },
+            }),
+            { ...config, getUserId: async () => "user" },
+            makeApi({
+                queries: { getAuthorization: undefined } as any,
+                mutations: { issueAuthorizationCode } as any,
+            })
+        );
+
+        expect(response.status).toBe(302);
+        const redirect = new URL(response.headers.get("Location") as string);
+        expect(redirect.searchParams.get("error")).toBe("server_error");
+        expect(issueAuthorizationCode).not.toHaveBeenCalled();
     });
 
     test("authorization endpoint returns login_required for max_age it cannot safely satisfy", async () => {
@@ -228,6 +331,51 @@ describe("OAuth handler protocol checks", () => {
 
         expect(response.status).toBe(400);
         await expect(response.json()).resolves.toMatchObject({ error: "invalid_target" });
+    });
+
+    test("token endpoint delegates refresh-token reuse detection to rotation without a family revocation API", async () => {
+        const { privateKey } = await generateKeyPair("RS256", { extractable: true });
+        const privateKeyPem = await exportPKCS8(privateKey);
+        const rotateRefreshToken = vi.fn(async () => ({
+            error: "refresh_token_reuse_detected",
+            revokedTokens: 2,
+            authorizationDeleted: true,
+        }));
+        const updateAuthorizationLastUsed = vi.fn(async () => undefined);
+
+        const response = await tokenHandler(
+            {} as any,
+            new Request("https://example.com/oauth/token", {
+                method: "POST",
+                body: new URLSearchParams({
+                    grant_type: "refresh_token",
+                    client_id: "client",
+                    refresh_token: "rotated-rt",
+                    client_secret: "secret",
+                }),
+            }),
+            { ...config, privateKey: privateKeyPem },
+            makeApi({
+                queries: {
+                    getRefreshToken: async () => ({
+                        clientId: "client",
+                        userId: "user",
+                        scopes: ["openid", "offline_access"],
+                        refreshTokenExpiresAt: Date.now() + 3600000,
+                        refreshTokenRotatedAt: Date.now() - 1000,
+                        refreshTokenFamilyId: "family",
+                        authorizationCode: "code",
+                    }),
+                } as any,
+                mutations: { rotateRefreshToken, updateAuthorizationLastUsed } as any,
+            })
+        );
+
+        expect(rotateRefreshToken).toHaveBeenCalledOnce();
+        expect(updateAuthorizationLastUsed).not.toHaveBeenCalled();
+        expect(response.status).toBe(400);
+        const body = await response.json();
+        expect(body.error).toBe("invalid_grant");
     });
 
     test("token endpoint stores the default audience on refresh tokens when no resource is requested", async () => {
