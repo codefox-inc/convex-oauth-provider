@@ -37,8 +37,11 @@ describe("OAuth 2.1 Flow", () => {
         expect(result.clientSecret).toBeDefined();
 
         // Check DB for Hash
-        const clientInDb = await t.query(api.queries.getClient, {
-            clientId: result.clientId
+        const clientInDb = await t.run(async (ctx: any) => {
+            return await ctx.db
+                .query("oauthClients")
+                .withIndex("by_client_id", (q: any) => q.eq("clientId", result.clientId))
+                .unique();
         });
         expect(clientInDb).toBeDefined();
         // Secret in DB should NOT be the plain secret returned
@@ -1671,7 +1674,7 @@ describe("OAuth 2.1 Flow", () => {
         expect(response.status).toBe(400);
         const body = await response.json();
         expect(body.error).toBe("invalid_request");
-        expect(body.error_description).toContain("Database error");
+        expect(body.error_description).toBe("Invalid client metadata");
     });
 
     test("Register Handler: succeeds with confidential client", async () => {
@@ -2019,7 +2022,7 @@ describe("OAuth 2.1 Flow", () => {
         expect(response.status).toBe(400);
         const body = await response.json();
         expect(body.error).toBe("invalid_request");
-        expect(body.error_description).toBe("Database error");
+        expect(body.error_description).toBe("Invalid request");
     });
 
     test("Authorize Handler: returns error when getUserId not configured", async () => {
@@ -2142,14 +2145,14 @@ describe("OAuth 2.1 Flow", () => {
             refreshTokenExpiresAt: Date.now() + 864000000,
         });
 
-        // 3. Verify Old Token Gone (tokens are stored as hashes)
+        // 3. Verify Old Token Kept as Rotation Tombstone (tokens are stored as hashes)
         const oldTokenHash = await hashToken(oldRefreshToken);
         const oldTokenRecord = await t.run(async (ctx) => {
             return await ctx.db.query("oauthTokens")
                 .filter(q => q.eq(q.field("refreshToken"), oldTokenHash))
                 .first();
         });
-        expect(oldTokenRecord).toBeNull();
+        expect(oldTokenRecord?.refreshTokenRotatedAt).toBeDefined();
 
         // 4. Verify New Token Exists (stored as hash)
         const newTokenHash = await hashToken(newRefreshToken);
@@ -2163,8 +2166,8 @@ describe("OAuth 2.1 Flow", () => {
         expect(newTokenRecord?.accessToken).toBe(await hashToken(accessToken));
 
         // 5. Replay Attack (Try to rotate old token again)
-        await expect(t.mutation(api.mutations.rotateRefreshToken, {
-            oldRefreshToken: oldRefreshToken, // Already used/deleted
+        const replayResult: any = await t.mutation(api.mutations.rotateRefreshToken, {
+            oldRefreshToken: oldRefreshToken, // Already used/rotated
             accessToken: "at2",
             refreshToken: "rt2",
             clientId: client.clientId,
@@ -2172,7 +2175,8 @@ describe("OAuth 2.1 Flow", () => {
             scopes: ["openid"],
             expiresAt: Date.now() + 3600000,
             refreshTokenExpiresAt: Date.now() + 864000000,
-        })).rejects.toThrow(); // Should fail "invalid_grant"
+        });
+        expect(replayResult.error).toBe("refresh_token_reuse_detected");
     });
 
     // ==========================================
@@ -2448,7 +2452,7 @@ describe("OAuth 2.1 Flow", () => {
         expect(auths[0].clientWebsite).toBe("https://example.com");
     });
 
-    test("Authorization: upsertAuthorization (merge scopes)", async () => {
+    test("Authorization: upsertAuthorization replaces scopes with the latest consent", async () => {
         const userId = "user-1";
         const client = await t.mutation(api.clientManagement.registerClient, {
             name: "Client",
@@ -2464,7 +2468,7 @@ describe("OAuth 2.1 Flow", () => {
             scopes: ["openid"]
         });
 
-        // Second authorization (should merge scopes)
+        // Second authorization narrows/replaces the stored grant.
         await t.mutation(api.mutations.upsertAuthorization, {
             userId,
             clientId: client.clientId,
@@ -2475,8 +2479,7 @@ describe("OAuth 2.1 Flow", () => {
             userId,
             clientId: client.clientId
         });
-        expect(auth?.scopes).toContain("openid");
-        expect(auth?.scopes).toContain("profile");
+        expect(auth?.scopes).toEqual(["profile"]);
     });
 
     test("Authorization: updateAuthorizationLastUsed", async () => {
@@ -2996,7 +2999,7 @@ codeHash: "test-code-hash",
         ).rejects.toThrow("invalid_code_verifier");
     });
 
-    test("consumeAuthCode: rejects plain PKCE verification failure", async () => {
+    test("consumeAuthCode: rejects stored plain PKCE method", async () => {
         const userId = "test-user-id";
         const client = await t.mutation(api.clientManagement.registerClient, {
             name: "Test Client",
@@ -3027,7 +3030,7 @@ codeHash: "test-code-hash",
                 redirectUri: "https://cb",
                 codeVerifier: "wrong-verifier",
             })
-        ).rejects.toThrow("invalid_code_verifier");
+        ).rejects.toThrow("unsupported_code_challenge_method");
     });
 
     test("consumeAuthCode: rejects expired code", async () => {

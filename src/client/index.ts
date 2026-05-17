@@ -83,7 +83,7 @@ export class OAuthProvider {
 
      
     private createAPI(component: any): OAuthComponentAPI {
-        return {
+        const api: OAuthComponentAPI = {
             queries: {
                 getClient: (ctx, args) => ctx.runQuery(component.queries.getClient, args),
                 getRefreshToken: (ctx, args) => ctx.runQuery(component.queries.getRefreshToken, args),
@@ -110,6 +110,11 @@ export class OAuthProvider {
                     ctx.runMutation(component.clientManagement.verifyClientSecret, args),
             },
         };
+        if (component.queries.getAuthorization) {
+            api.queries.getAuthorization = (ctx, args) =>
+                ctx.runQuery(component.queries.getAuthorization, args);
+        }
+        return api;
     }
 
     /**

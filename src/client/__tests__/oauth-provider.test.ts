@@ -189,6 +189,21 @@ describe("OAuthProvider", () => {
             expect(runQuery).toHaveBeenCalledWith(component.queries.getRefreshToken, { refreshToken: "token-hash" });
         });
 
+        test("API getAuthorization is omitted when generated component references are stale", () => {
+            const staleComponent = {
+                ...component,
+                queries: {
+                    ...component.queries,
+                    getAuthorization: undefined,
+                },
+            };
+            const provider = new OAuthProvider(staleComponent as any, config);
+
+            const api = (provider as any).api;
+
+            expect(api.queries.getAuthorization).toBeUndefined();
+        });
+
         test("API getTokensByUser should be callable", async () => {
             const provider = new OAuthProvider(component as any, config);
             const runQuery = vi.fn(async () => [{ accessToken: "token" }]);

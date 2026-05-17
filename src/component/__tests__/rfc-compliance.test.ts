@@ -510,6 +510,189 @@ describe("OAuth 2.1 RFC Compliance", () => {
       expect(result1.userId).toBeDefined();
       // Note: Refresh token rotation is tested at handler level where tokens are issued
     });
+
+    test("refresh token reuse revokes the active token family and authorization", async () => {
+      const t = convexTest(schema, modules);
+
+      const client = await t.mutation(api.clientManagement.registerClient, {
+        name: "Reuse Detection Client",
+        type: "public",
+        redirectUris: ["https://example.com/callback"],
+        scopes: ["openid", "offline_access"],
+      });
+
+      await t.mutation(api.mutations.upsertAuthorization, {
+        userId: "user123",
+        clientId: client.clientId,
+        scopes: ["openid", "offline_access"],
+      });
+
+      await t.mutation(api.mutations.saveTokens, {
+        accessToken: "access-token-1",
+        refreshToken: "refresh-token-1",
+        clientId: client.clientId,
+        userId: "user123",
+        scopes: ["openid", "offline_access"],
+        expiresAt: Date.now() + 3600000,
+        refreshTokenExpiresAt: Date.now() + 2592000000,
+        authorizationCode: "authorization-code-family",
+      });
+
+      await t.mutation(api.mutations.rotateRefreshToken, {
+        oldRefreshToken: "refresh-token-1",
+        accessToken: "access-token-2",
+        refreshToken: "refresh-token-2",
+        clientId: client.clientId,
+        userId: "user123",
+        scopes: ["openid", "offline_access"],
+        expiresAt: Date.now() + 3600000,
+        refreshTokenExpiresAt: Date.now() + 2592000000,
+      });
+
+      const reuseResult: any = await t.mutation(api.mutations.rotateRefreshToken, {
+        oldRefreshToken: "refresh-token-1",
+        accessToken: "access-token-3",
+        refreshToken: "refresh-token-3",
+        clientId: client.clientId,
+        userId: "user123",
+        scopes: ["openid", "offline_access"],
+        expiresAt: Date.now() + 3600000,
+        refreshTokenExpiresAt: Date.now() + 2592000000,
+      });
+
+      expect(reuseResult.error).toBe("refresh_token_reuse_detected");
+
+      const remainingTokens = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("oauthTokens")
+          .filter((q) => q.eq(q.field("clientId"), client.clientId))
+          .collect();
+      });
+      expect(remainingTokens).toHaveLength(0);
+
+      const authorization = await t.query(api.queries.getAuthorization, {
+        userId: "user123",
+        clientId: client.clientId,
+      });
+      expect(authorization).toBeNull();
+    });
+
+    test("refresh token reuse after multiple rotations revokes the whole token family", async () => {
+      const t = convexTest(schema, modules);
+
+      const client = await t.mutation(api.clientManagement.registerClient, {
+        name: "Multi Rotate Reuse Client",
+        type: "public",
+        redirectUris: ["https://example.com/callback"],
+        scopes: ["openid", "offline_access"],
+      });
+
+      await t.mutation(api.mutations.upsertAuthorization, {
+        userId: "user123",
+        clientId: client.clientId,
+        scopes: ["openid", "offline_access"],
+      });
+
+      await t.mutation(api.mutations.saveTokens, {
+        accessToken: "access-token-1",
+        refreshToken: "refresh-token-1",
+        clientId: client.clientId,
+        userId: "user123",
+        scopes: ["openid", "offline_access"],
+        expiresAt: Date.now() + 3600000,
+        refreshTokenExpiresAt: Date.now() + 2592000000,
+        authorizationCode: "authorization-code-family",
+      });
+
+      await t.mutation(api.mutations.rotateRefreshToken, {
+        oldRefreshToken: "refresh-token-1",
+        accessToken: "access-token-2",
+        refreshToken: "refresh-token-2",
+        clientId: client.clientId,
+        userId: "user123",
+        scopes: ["openid", "offline_access"],
+        expiresAt: Date.now() + 3600000,
+        refreshTokenExpiresAt: Date.now() + 2592000000,
+      });
+
+      await t.mutation(api.mutations.rotateRefreshToken, {
+        oldRefreshToken: "refresh-token-2",
+        accessToken: "access-token-3",
+        refreshToken: "refresh-token-3",
+        clientId: client.clientId,
+        userId: "user123",
+        scopes: ["openid", "offline_access"],
+        expiresAt: Date.now() + 3600000,
+        refreshTokenExpiresAt: Date.now() + 2592000000,
+      });
+
+      const reuseResult: any = await t.mutation(api.mutations.rotateRefreshToken, {
+        oldRefreshToken: "refresh-token-2",
+        accessToken: "access-token-4",
+        refreshToken: "refresh-token-4",
+        clientId: client.clientId,
+        userId: "user123",
+        scopes: ["openid", "offline_access"],
+        expiresAt: Date.now() + 3600000,
+        refreshTokenExpiresAt: Date.now() + 2592000000,
+      });
+
+      expect(reuseResult.error).toBe("refresh_token_reuse_detected");
+
+      const remainingTokens = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("oauthTokens")
+          .filter((q) => q.eq(q.field("clientId"), client.clientId))
+          .collect();
+      });
+      expect(remainingTokens).toHaveLength(0);
+
+      const authorization = await t.query(api.queries.getAuthorization, {
+        userId: "user123",
+        clientId: client.clientId,
+      });
+      expect(authorization).toBeNull();
+    });
+
+    test("cleanupExpired preserves rotated refresh-token tombstones while descendants are active", async () => {
+      const t = convexTest(schema, modules);
+
+      await t.run(async (ctx) => {
+        await ctx.db.insert("oauthTokens", {
+          accessToken: "a".repeat(64),
+          refreshToken: "b".repeat(64),
+          clientId: "client",
+          userId: "user",
+          scopes: ["openid", "offline_access"],
+          expiresAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+          refreshTokenExpiresAt: Date.now() - 1000,
+          authorizationCode: "authorization-code-family",
+          refreshTokenFamilyId: "family",
+          refreshTokenRotatedAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
+        });
+        await ctx.db.insert("oauthTokens", {
+          accessToken: "c".repeat(64),
+          refreshToken: "d".repeat(64),
+          clientId: "client",
+          userId: "user",
+          scopes: ["openid", "offline_access"],
+          expiresAt: Date.now() - 1000,
+          refreshTokenExpiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+          authorizationCode: "authorization-code-family",
+          refreshTokenFamilyId: "family",
+        });
+      });
+
+      await t.mutation(internal.mutations.cleanupExpired, {});
+
+      const tombstone = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("oauthTokens")
+          .withIndex("by_refresh_token", (q) => q.eq("refreshToken", "b".repeat(64)))
+          .unique();
+      });
+      expect(tombstone?.refreshTokenRotatedAt).toBeDefined();
+    });
   });
 
   describe("Section 5.1 - Bearer Token Usage", () => {
@@ -739,6 +922,12 @@ describe("OAuth 2.1 RFC Compliance", () => {
       expect(codeData.userId).toBe("user123");
       expect(codeData.codeHash).toBeDefined(); // Verify codeHash is returned
 
+      await t.mutation(api.mutations.upsertAuthorization, {
+        userId: "user123",
+        clientId: client.clientId,
+        scopes: ["openid", "profile"],
+      });
+
       // Save tokens using the returned codeHash
       await t.mutation(api.mutations.saveTokens, {
         accessToken: "test-access-token",
@@ -796,6 +985,12 @@ describe("OAuth 2.1 RFC Compliance", () => {
 
       expect(tokensAfter.length).toBe(0); // All tokens should be deleted
 
+      const authorizationAfter = await t.query(api.queries.getAuthorization, {
+        userId: "user123",
+        clientId: client.clientId,
+      });
+      expect(authorizationAfter).toBeNull();
+
       await expect(
         t.mutation(api.mutations.saveTokens, {
           accessToken: "replayed-access-token",
@@ -808,6 +1003,44 @@ describe("OAuth 2.1 RFC Compliance", () => {
           authorizationCode: codeData.codeHash,
         })
       ).rejects.toThrow("authorization_code_reuse_detected");
+    });
+
+    test("used auth code tombstone survives while descendant refresh tokens are still valid", async () => {
+      const t = convexTest(schema, modules);
+
+      await t.run(async (ctx) => {
+        await ctx.db.insert("oauthCodes", {
+          code: "b".repeat(64),
+          clientId: "client",
+          userId: "user",
+          scopes: ["openid", "offline_access"],
+          redirectUri: "https://cb",
+          codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+          codeChallengeMethod: "S256",
+          expiresAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+          usedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+        });
+        await ctx.db.insert("oauthTokens", {
+          accessToken: "a".repeat(64),
+          refreshToken: "c".repeat(64),
+          clientId: "client",
+          userId: "user",
+          scopes: ["openid", "offline_access"],
+          expiresAt: Date.now() - 1000,
+          refreshTokenExpiresAt: Date.now() + 29 * 24 * 60 * 60 * 1000,
+          authorizationCode: "b".repeat(64),
+        });
+      });
+
+      await t.mutation(internal.mutations.cleanupExpired, {});
+
+      const remaining = await t.run(async (ctx) => {
+        return await ctx.db
+          .query("oauthCodes")
+          .withIndex("by_code", (q) => q.eq("code", "b".repeat(64)))
+          .unique();
+      });
+      expect(remaining).not.toBeNull();
     });
 
     test("RFC Line 1136: Single use enforcement - code is marked as used", async () => {

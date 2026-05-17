@@ -26,6 +26,7 @@ function isValidRedirectUri(uri: string): boolean {
     const isLoopback =
         host === "localhost" ||
         host === "127.0.0.1" ||
+        host === "[::1]" ||
         host === "::1";
 
     if (parsed.protocol === "https:") return true;
@@ -210,6 +211,16 @@ export const deleteClient = mutation({
 
         for (const code of codes) {
             await ctx.db.delete(code._id);
+        }
+
+        // Delete all authorization records for this client
+        const authorizations = await ctx.db
+            .query("oauthAuthorizations")
+            .filter(q => q.eq(q.field("clientId"), args.clientId))
+            .collect();
+
+        for (const authorization of authorizations) {
+            await ctx.db.delete(authorization._id);
         }
 
         // Delete the client

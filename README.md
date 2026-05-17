@@ -71,6 +71,7 @@ This implementation follows [OAuth 2.1](https://datatracker.ietf.org/doc/html/dr
 - **Scope Validation**: Only registered scopes are allowed per client
 - **Token Hashing**: Access and refresh tokens are stored as SHA-256 hashes
 - **Client Secret Hashing**: Confidential client secrets use bcrypt
+- **Client Secret Compatibility**: Newly issued confidential client secrets fit within bcrypt's 72-byte input limit; existing longer secrets remain valid for patch-release compatibility and should be rotated when practical
 - **Internal Mutations**: Critical operations like `issueAuthorizationCode` are not directly accessible
 - **DCR Disabled by Default**: Dynamic Client Registration must be explicitly enabled
 
@@ -107,6 +108,7 @@ Refresh tokens are **only issued** when the `offline_access` scope is requested 
 - The original authorization must have included the `offline_access` scope
 - Refresh tokens are automatically rotated on each use (old token is invalidated)
 - The new refresh token maintains the same scope as the original
+- Reuse of a rotated refresh token revokes the active refresh-token family and its authorization record
 
 This follows OAuth 2.1 and OpenID Connect specifications, ensuring that long-lived refresh tokens are only issued with explicit user consent.
 
@@ -620,6 +622,32 @@ interface OAuthConfig {
 </details>
 
 ## Token Verification
+
+### Revocation and Access Token Lifetime
+
+Access tokens are JWTs and can be verified statelessly with the JWKS. Stateless verification alone cannot observe authorization revocation, authorization-code replay detection, or refresh-token family revocation until the access token expires.
+
+For Convex resource servers, wire `createAuthorizationChecker()` into `createAuthHelper()` so bearer-token requests check the current authorization record:
+
+```typescript
+import { createAuthHelper, OAuthProvider } from "@codefox-inc/oauth-provider";
+import { components } from "./_generated/api";
+
+const oauthProvider = new OAuthProvider(components.oauthProvider, {
+    privateKey: process.env.JWT_PRIVATE_KEY!,
+    jwks: process.env.JWKS!,
+    siteUrl: process.env.SITE_URL!,
+});
+
+export const authHelper = createAuthHelper({
+    providers: ["anonymous"],
+    checkAuthorization: oauthProvider.createAuthorizationChecker(),
+});
+```
+
+If you verify access tokens outside Convex with `verifyAccessToken()` only, revoked access tokens remain valid until their `exp` time. Use short access-token lifetimes and a resource-server authorization check if immediate revocation is required.
+
+After upgrading this component, rerun Convex code generation (for example `convex dev --once` or your repository's codegen script). The generated component references and schema must match the package version; `prompt=none` silent authorization also relies on the latest generated `getAuthorization` query reference.
 
 ### In Convex Functions
 
